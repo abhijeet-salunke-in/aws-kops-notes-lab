@@ -376,12 +376,13 @@ Install KOPS CLI.
 
 ### Installation
 
-Website Link :
+### Website Link :
 
 ```bash
 https://kops.sigs.k8s.io/getting_started/install/
 
 ```
+### Installation
 
 ```bash
 curl -Lo kops https://github.com/kubernetes/kops/releases/latest/download/kops-linux-amd64
@@ -411,7 +412,7 @@ Client version: x.x.x
 
 kubectl is used to interact with Kubernetes clusters.
 
-Website Link :
+### Website Link :
 
 ```bash
 https://kubernetes.io/docs/tasks/tools/install-kubectl-linux/
