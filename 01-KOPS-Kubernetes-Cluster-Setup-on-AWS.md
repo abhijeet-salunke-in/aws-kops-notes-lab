@@ -759,3 +759,271 @@ This lab demonstrates the complete lifecycle of creating a Kubernetes cluster on
 8. Manage the cluster using kubectl and KOPS.
 
 KOPS automates the creation and management of production-grade Kubernetes clusters by provisioning and maintaining the required AWS resources.
+
+# Cluster Deletion and Resource Cleanup
+
+## Overview
+
+Since the Kubernetes cluster was created using **KOPS**, it should also be deleted using **KOPS**.
+
+Deleting the cluster through KOPS ensures that all associated AWS resources are removed correctly and helps prevent unnecessary AWS charges.
+
+---
+
+## Step 1: Verify Existing Cluster
+
+### Check Current Cluster
+
+```bash
+kops get cluster
+```
+
+### Expected Output
+
+```text
+NAME
+abhi.k8s.local
+```
+
+---
+
+## Step 2: Preview Resources to Be Deleted
+
+### Purpose
+
+Review the resources that KOPS plans to remove before executing the deletion.
+
+### Command
+
+```bash
+kops delete cluster --name abhi.k8s.local
+```
+
+### Resources Typically Listed
+
+```text
+EC2 Instances
+Auto Scaling Groups
+Load Balancers
+Security Groups
+VPC Components
+IAM Resources Created by KOPS
+```
+
+> This command performs a dry run and does not delete resources.
+
+---
+
+## Step 3: Delete the Cluster
+
+### Purpose
+
+Remove the Kubernetes cluster and associated AWS resources.
+
+### Command
+
+```bash
+kops delete cluster \
+--name abhi.k8s.local \
+--yes
+```
+
+### Example
+
+```bash
+kops delete cluster --name abhi.k8s.local --yes
+```
+
+---
+
+## Step 4: Wait for Resource Cleanup
+
+### Estimated Time
+
+```text
+5–15 Minutes
+```
+
+The deletion duration depends on:
+
+- EC2 Instances
+- Load Balancers
+- Auto Scaling Groups
+- Networking Resources
+
+---
+
+## Step 5: Verify Cluster Deletion
+
+### Command
+
+```bash
+kops get cluster
+```
+
+### Expected Output
+
+```text
+No clusters found
+```
+
+---
+
+## Step 6: Verify AWS Resource Cleanup
+
+### EC2
+
+Verify that no KOPS-managed instances remain:
+
+```text
+EC2 → Instances
+```
+
+Expected:
+
+```text
+No KOPS Instances
+```
+
+---
+
+### Auto Scaling Groups
+
+Verify removal of:
+
+```text
+Control Plane ASG
+Worker Node ASG
+```
+
+---
+
+### Load Balancers
+
+Verify removal of:
+
+```text
+Kubernetes API Load Balancer
+```
+
+---
+
+### VPC
+
+KOPS often removes the VPC automatically.
+
+Verify in:
+
+```text
+VPC Dashboard
+```
+
+Ensure no unused KOPS VPC resources remain.
+
+---
+
+## Step 7: Delete S3 State Store (Optional)
+
+### Purpose
+
+Remove the KOPS state store if you no longer need the cluster configuration.
+
+### Example Bucket
+
+```text
+abhis.kops.v1
+```
+
+### Delete Bucket
+
+```bash
+aws s3 rb s3://abhis.kops.v1 --force
+```
+
+### Result
+
+```text
+Deletes all objects
+Deletes the bucket
+```
+
+---
+
+# Cost-Saving Checklist
+
+After cluster deletion, verify that the following resources are no longer present:
+
+```text
+✅ EC2 Instances
+
+✅ Load Balancers
+
+✅ EBS Volumes
+
+✅ Auto Scaling Groups
+
+✅ NAT Gateways (if any)
+
+✅ Elastic IP Addresses
+```
+
+These resources are the most common causes of unexpected AWS charges after lab activities.
+
+---
+
+# Deletion Workflow
+
+```text
+Verify Existing Cluster
+↓
+Preview Cluster Deletion
+↓
+Delete Cluster
+↓
+Wait for Cleanup
+↓
+Verify Cluster Removal
+↓
+Verify AWS Resource Cleanup
+↓
+(Optional) Delete S3 State Store
+↓
+Cost Verification Complete
+```
+
+---
+
+# Commands Summary
+
+```bash
+# Check cluster
+kops get cluster
+
+# Preview deletion
+kops delete cluster --name abhi.k8s.local
+
+# Delete cluster
+kops delete cluster --name abhi.k8s.local --yes
+
+# Verify deletion
+kops get cluster
+
+# Optional: delete KOPS state store
+aws s3 rb s3://abhis.kops.v1 --force
+```
+
+---
+
+## Recommended Post-Deletion Verification
+
+After deleting the cluster:
+
+1. Verify all EC2 instances are terminated.
+2. Verify all Load Balancers are removed.
+3. Verify all EBS volumes are deleted.
+4. Verify Auto Scaling Groups no longer exist.
+5. Verify no Elastic IP addresses remain allocated.
+6. Verify no NAT Gateways remain active.
+7. Delete the S3 state store if it is no longer required.
+
+This final verification helps ensure that no billable AWS resources remain from the KOPS cluster deployment.
