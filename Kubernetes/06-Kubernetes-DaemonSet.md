@@ -401,35 +401,6 @@ daemonset.apps/daemon-port-deploy created
 
 ---
 
-# Common Error During Practice
-
-While creating YAML:
-
-```text
-error converting YAML to JSON
-
-yaml: line xx: could not find expected ':'
-```
-
-Reason:
-
-```text
-Incorrect YAML Indentation
-```
-
-Fix:
-
-```text
-Verify Spaces And Alignment Carefully
-```
-
-Then execute again:
-
-```bash
-kubectl create -f daemon-demo.yml
-```
-
----
 
 # Step 3: Verify DaemonSet
 
