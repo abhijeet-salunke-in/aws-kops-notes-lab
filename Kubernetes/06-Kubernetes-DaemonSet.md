@@ -1,38 +1,22 @@
 # Kubernetes DaemonSet
 
-## Overview
+## Topic Overview
 
-So far in Kubernetes we have learned:
+Previously we learned:
 
 ```text
 Pod
  ↓
-ReplicationController
+Replication Controller
  ↓
 ReplicaSet
  ↓
 Deployment
 ```
 
-Each Kubernetes object was introduced to solve a specific problem.
+Each Kubernetes object was created to solve a specific problem.
 
-For example:
-
-```text
-Pod
- ↓
-Runs Containers
-
-ReplicaSet
- ↓
-Maintains Desired Number Of Pods
-
-Deployment
- ↓
-Provides Updates, Rollbacks, Revisions
-```
-
-However, there are certain workloads where we do not want:
+However, there are some workloads where we do not want:
 
 ```text
 Fixed Number Of Pods
@@ -52,19 +36,49 @@ DaemonSet
 
 ---
 
-# Problem Statement
+# Cluster Used During Practice
 
-Suppose we have a cluster:
+Initially the cluster contained:
 
 ```text
-Cluster
-│
+1 Control Plane
+1 Worker Node
+```
+
+Architecture:
+
+```text
+Kubernetes Cluster
+
+├── Control Plane
+└── Worker Node-1
+```
+
+During the practical session:
+
+```text
+One More Worker Node
+```
+
+was added.
+
+Final Architecture:
+
+```text
+Kubernetes Cluster
+
 ├── Control Plane
 ├── Worker Node-1
 └── Worker Node-2
 ```
 
-Now imagine we need:
+This setup was used to demonstrate DaemonSet behavior.
+
+---
+
+# Problem Statement
+
+Suppose we need:
 
 ```text
 Monitoring Agent
@@ -78,87 +92,61 @@ OR
 Security Agent
 ```
 
-to run on every worker node.
+to run on every node.
 
 Examples:
 
 ```text
 Prometheus Node Exporter
+
 Fluentd
+
 Filebeat
+
 Datadog Agent
+
 Falco
 ```
 
-These applications must run on every node because they collect:
+Using Deployment is not ideal because Deployment only guarantees:
 
 ```text
-Logs
-Metrics
-Security Events
-System Information
+Desired Number Of Pods
 ```
 
-from the node itself.
-
----
-
-# Why Deployment Is Not Suitable
-
-Suppose we use Deployment:
+Example:
 
 ```yaml
 replicas: 2
 ```
 
-Deployment only guarantees:
+Pods may run anywhere.
+
+Example:
 
 ```text
-Two Pods Running Somewhere In Cluster
+Node-1 → 2 Pods
+
+Node-2 → 0 Pods
 ```
 
-Possible result:
+This does not solve our requirement.
+
+We need:
 
 ```text
-Worker-1 → Pod
-Worker-1 → Pod
-
-Worker-2 → No Pod
-```
-
-This is acceptable for applications.
-
-But not acceptable for:
-
-```text
-Monitoring Agents
-Log Collectors
-Security Agents
-```
-
-because every node must be monitored.
-
----
-
-# Kubernetes Solution
-
-Kubernetes introduced:
-
-```text
-DaemonSet
-```
-
-DaemonSet guarantees:
-
-```text
-One Pod Per Node
+Exactly One Pod On Every Node
 ```
 
 ---
 
-# What Is DaemonSet?
+# What is DaemonSet?
 
-DaemonSet is a Kubernetes workload object that ensures one Pod runs on every node in a cluster.
+A DaemonSet is a Kubernetes workload object that ensures:
+
+```text
+One Pod Runs On Every Node
+```
 
 Whenever:
 
@@ -174,40 +162,35 @@ Whenever:
 Node Removed
 ```
 
-DaemonSet automatically removes the corresponding Pod.
+DaemonSet automatically removes the associated Pod.
 
 ---
 
-# DaemonSet Architecture
+# Why Do We Need DaemonSet?
 
-Example Cluster:
-
-```text
-1 Control Plane
-2 Worker Nodes
-```
-
-Architecture:
+Without DaemonSet:
 
 ```text
-DaemonSet
-     │
-     ├─────────────┐
-     │             │
-     ▼             ▼
+Manually Create Pod On Node-1
 
-Worker-1      Worker-2
-    │              │
-    ▼              ▼
+Manually Create Pod On Node-2
 
-Daemon Pod    Daemon Pod
+Manually Create Pod On Node-3
 ```
 
-Result:
+Problems:
 
 ```text
-One Pod On Every Worker Node
+Manual Work
+
+Difficult Management
+
+Not Scalable
+
+Error Prone
 ```
+
+DaemonSet automates this process.
 
 ---
 
@@ -215,68 +198,39 @@ One Pod On Every Worker Node
 
 ## 1. Automatic Node Coverage
 
-Without DaemonSet:
-
 ```text
-Manually Create Pod On Every Node
+One Pod Per Node
 ```
 
-With DaemonSet:
-
-```text
-Automatically Create Pod On Every Node
-```
+No manual creation required.
 
 ---
 
 ## 2. Self-Healing
 
-Suppose:
+If a DaemonSet Pod crashes:
 
 ```text
-Daemon Pod Deleted
-```
-
-DaemonSet detects:
-
-```text
-Desired = 1 Pod On Node
-
-Current = 0 Pods On Node
-```
-
-DaemonSet automatically creates:
-
-```text
-New Pod
+Pod Deleted
+      ↓
+DaemonSet Detects
+      ↓
+New Pod Created
 ```
 
 ---
 
 ## 3. Automatic Node Scaling
 
-Suppose cluster grows:
+When a new node joins:
 
 ```text
-Worker-1
-Worker-2
+New Node Added
+      ↓
+DaemonSet Creates New Pod
 ```
 
-to
-
-```text
-Worker-1
-Worker-2
-Worker-3
-```
-
-DaemonSet automatically creates:
-
-```text
-Daemon Pod On Worker-3
-```
-
-No manual action required.
+Automatically.
 
 ---
 
@@ -286,10 +240,9 @@ Examples:
 
 ```text
 Prometheus Node Exporter
+
 Datadog Agent
 ```
-
-Every node sends metrics.
 
 ---
 
@@ -299,10 +252,9 @@ Examples:
 
 ```text
 Fluentd
+
 Filebeat
 ```
-
-Every node sends logs.
 
 ---
 
@@ -314,36 +266,61 @@ Examples:
 Falco
 ```
 
-Every node reports security events.
-
 ---
 
-# Practical Lab Performed
+# DaemonSet Architecture
 
-Cluster Initially:
-
-```text
-1 Control Plane
-1 Worker Node
-```
-
-A new worker node was added.
-
-Final Cluster:
+Final cluster used during practice:
 
 ```text
-1 Control Plane
-2 Worker Nodes
+Control Plane
+Worker Node-1
+Worker Node-2
 ```
 
-Then a DaemonSet was deployed.
+DaemonSet Pods:
+
+```text
+Control Plane
+      X
+
+Worker Node-1
+      |
+      +---- Daemon Pod
+
+Worker Node-2
+      |
+      +---- Daemon Pod
+```
 
 Observation:
 
 ```text
-DaemonSet Automatically Created
-One Pod On Each Worker Node
+2 Worker Nodes
+
+2 DaemonSet Pods
 ```
+
+Exactly one Pod per worker node.
+
+---
+
+# Deployment vs DaemonSet
+
+| Feature             | Deployment    | DaemonSet  |
+| ------------------- | ------------- | ---------- |
+| Fixed Replicas      | Yes           | No         |
+| One Pod Per Node    | No            | Yes        |
+| Self-Healing        | Yes           | Yes        |
+| Scaling             | Replica Based | Node Based |
+| Rollback            | Yes           | Limited    |
+| Application Hosting | Yes           | Usually No |
+| Monitoring Agents   | No            | Yes        |
+| Log Collection      | No            | Yes        |
+
+---
+
+# Practical Lab
 
 ---
 
@@ -357,8 +334,11 @@ Provide:
 
 ```text
 AWS Access Key
+
 AWS Secret Key
+
 Region
+
 Output Format
 ```
 
@@ -390,23 +370,23 @@ s3://abhis.kops.v1
 
 ---
 
-# Step 3: Check Instance Groups
+# Step 3: Check Existing Instance Groups
 
 ```bash
 kops get ig --name=abhi.k8s.local
 ```
 
-Example Output:
+Output:
 
 ```text
-NAME
-master-ap-south-1a
+control-plane
+
 nodes-ap-south-1a
 ```
 
 ---
 
-# Step 4: Add Worker Node
+# Step 4: Add New Worker Node
 
 Edit worker node instance group:
 
@@ -414,16 +394,14 @@ Edit worker node instance group:
 kops edit ig nodes-ap-south-1a
 ```
 
----
-
-Current:
+Change:
 
 ```yaml
 minSize: 1
 maxSize: 1
 ```
 
-Change to:
+To:
 
 ```yaml
 minSize: 2
@@ -440,21 +418,15 @@ Save and Exit.
 kops update cluster --yes
 ```
 
-Expected:
-
-```text
-Cluster Updated
-```
-
 ---
 
-# Step 6: Apply Rolling Update
+# Step 6: Perform Rolling Update
 
 ```bash
 kops rolling-update cluster --yes
 ```
 
-This creates the new worker node.
+Wait until the new node is created.
 
 ---
 
@@ -464,16 +436,14 @@ This creates the new worker node.
 kubectl get nodes
 ```
 
-Example:
+Expected:
 
 ```text
-NAME               STATUS
+control-plane
 
-control-plane      Ready
+worker-node-1
 
-worker-node-1      Ready
-
-worker-node-2      Ready
+worker-node-2
 ```
 
 ---
@@ -490,7 +460,7 @@ metadata:
   name: devops
 ```
 
-Create:
+Apply:
 
 ```bash
 kubectl create -f namespace.yml
@@ -539,26 +509,6 @@ spec:
 
 # Understanding The YAML
 
-## apiVersion
-
-```yaml
-apiVersion: apps/v1
-```
-
-DaemonSet belongs to Apps API Group.
-
----
-
-## kind
-
-```yaml
-kind: DaemonSet
-```
-
-Creates DaemonSet Object.
-
----
-
 ## selector
 
 ```yaml
@@ -577,16 +527,7 @@ Used to identify Pods managed by DaemonSet.
 template:
 ```
 
-Defines Pod Blueprint.
-
-Contains:
-
-```text
-Labels
-Container Name
-Image
-Port
-```
+Defines Pod configuration.
 
 ---
 
@@ -623,9 +564,9 @@ kubectl get ds
 Example:
 
 ```text
-NAME                 DESIRED CURRENT READY
+NAME                  DESIRED   CURRENT   READY
 
-daemon-port-deploy      2       2      2
+daemon-port-deploy    2         2         2
 ```
 
 Meaning:
@@ -654,6 +595,12 @@ daemon-port-deploy-rnlnz
 daemon-port-deploy-t78z9
 ```
 
+Status:
+
+```text
+Running
+```
+
 ---
 
 # Step 13: Verify Pod Placement
@@ -665,35 +612,17 @@ kubectl get pods -o wide
 Example:
 
 ```text
-NAME                      NODE
+daemon-port-deploy-rnlnz
+Node = Worker Node-1
 
-daemon-port-deploy-rnlnz  worker-node-1
-
-daemon-port-deploy-t78z9  worker-node-2
+daemon-port-deploy-t78z9
+Node = Worker Node-2
 ```
 
 Observation:
 
 ```text
 One Pod Running On Each Worker Node
-```
-
----
-
-# Step 14: Verify Nodes
-
-```bash
-kubectl get nodes
-```
-
-Example:
-
-```text
-control-plane
-
-worker-node-1
-
-worker-node-2
 ```
 
 ---
@@ -706,13 +635,13 @@ View Pods:
 kubectl get pods
 ```
 
-Delete One Pod:
+Delete one Pod:
 
 ```bash
 kubectl delete pod daemon-port-deploy-rnlnz
 ```
 
-Verify Again:
+Verify:
 
 ```bash
 kubectl get pods
@@ -724,71 +653,59 @@ Result:
 New Pod Automatically Created
 ```
 
-Reason:
+This proves:
 
 ```text
-DaemonSet Maintains
-One Pod Per Node
+DaemonSet Self-Healing
 ```
 
 ---
 
 # Automatic Node Addition Demonstration
 
-Current Cluster:
+Before:
 
 ```text
-Worker-1
-Worker-2
+1 Control Plane
+
+1 Worker Node
 ```
 
-Add New Worker Node.
-
-Verify:
-
-```bash
-kubectl get nodes
-```
-
-Now:
+DaemonSet Pods:
 
 ```text
-Worker-1
-Worker-2
-Worker-3
+1
 ```
 
-Check Pods:
-
-```bash
-kubectl get pods -o wide
-```
-
-Result:
+After adding a worker node:
 
 ```text
-Worker-1 → Pod
+1 Control Plane
 
-Worker-2 → Pod
+2 Worker Nodes
+```
 
-Worker-3 → Pod
+DaemonSet Pods:
+
+```text
+2
 ```
 
 Observation:
 
 ```text
 DaemonSet Automatically Created
-Pod On New Node
+A Pod On The New Node
 ```
 
 ---
 
-# Real-World Use Cases
+# Real World Use Cases
 
 ## Fluentd
 
 ```text
-Collect Logs From Every Node
+Log Collection
 ```
 
 ---
@@ -796,7 +713,7 @@ Collect Logs From Every Node
 ## Filebeat
 
 ```text
-Ship Logs To Central Server
+Log Shipping
 ```
 
 ---
@@ -804,9 +721,7 @@ Ship Logs To Central Server
 ## Prometheus Node Exporter
 
 ```text
-Collect CPU
-Memory
-Disk Metrics
+Node Monitoring
 ```
 
 ---
@@ -827,63 +742,71 @@ Runtime Security Monitoring
 
 ---
 
-# Deployment vs ReplicaSet vs DaemonSet
-
-| Feature             | ReplicaSet | Deployment | DaemonSet  |
-| ------------------- | ---------- | ---------- | ---------- |
-| Self-Healing        | Yes        | Yes        | Yes        |
-| Fixed Replicas      | Yes        | Yes        | No         |
-| Rolling Updates     | No         | Yes        | Limited    |
-| Rollback            | No         | Yes        | No         |
-| One Pod Per Node    | No         | No         | Yes        |
-| Application Hosting | Yes        | Yes        | Usually No |
-| Monitoring Agents   | No         | No         | Yes        |
-
----
-
 # Useful Commands
 
-View DaemonSets:
+## View DaemonSets
 
 ```bash
 kubectl get ds
 ```
 
-Describe DaemonSet:
+---
+
+## Detailed Information
 
 ```bash
 kubectl describe ds daemon-port-deploy
 ```
 
-View Pods:
+---
+
+## View Pods
 
 ```bash
 kubectl get pods
 ```
 
-View Pod Placement:
+---
+
+## View Pod Placement
 
 ```bash
 kubectl get pods -o wide
 ```
 
-View Nodes:
+---
+
+## View Nodes
 
 ```bash
 kubectl get nodes
 ```
 
+---
+
+# Cleanup
+
 Delete DaemonSet:
 
 ```bash
-kubectl delete ds daemon-port-deploy
+kubectl delete -f Daemon-demo.yml
 ```
 
 OR
 
 ```bash
-kubectl delete -f Daemon-demo.yml
+kubectl delete ds daemon-port-deploy
 ```
+
+Verify:
+
+```bash
+kubectl get ds
+
+kubectl get pods
+```
+
+Everything should be removed.
 
 ---
 
@@ -901,29 +824,23 @@ To automatically run Pods on all nodes.
 
 ---
 
-### Does DaemonSet require replicas?
-
-```text
-No
-```
-
-DaemonSet automatically calculates Pod count based on node count.
-
----
-
 ### What happens when a new node joins the cluster?
 
 DaemonSet automatically creates a Pod on that node.
 
 ---
 
-### What happens if a DaemonSet Pod is deleted?
+### Does DaemonSet require replicas?
 
-DaemonSet automatically recreates it.
+```text
+No
+```
+
+DaemonSet automatically determines the number of Pods based on the number of nodes.
 
 ---
 
-### Main Use Cases?
+### What is the main use case of DaemonSet?
 
 ```text
 Monitoring Agents
@@ -935,41 +852,70 @@ Security Agents
 
 ---
 
+### Difference Between Deployment and DaemonSet
+
+Deployment:
+
+```text
+Maintains Fixed Number Of Pods
+```
+
+DaemonSet:
+
+```text
+Maintains One Pod Per Node
+```
+
+---
+
 # Summary
 
 ```text
 DaemonSet
-     │
-     ├── One Pod Per Node
-     ├── Self-Healing
-     ├── Automatic Node Coverage
-     ├── Monitoring Agents
-     ├── Log Collection
-     └── Security Monitoring
+      |
+      +--> One Pod Per Node
+      |
+      +--> Self-Healing
+      |
+      +--> Automatic Node Coverage
+      |
+      +--> Monitoring Agents
+      |
+      +--> Log Collection Agents
+      |
+      +--> Security Agents
 ```
 
 ## Workflow
 
 ```text
 Create DaemonSet
-        │
-        ▼
-Pod Created On Every Node
-        │
-        ▼
+        |
+        v
+DaemonSet Creates Pod On Every Node
+        |
+        v
 New Node Added
-        │
-        ▼
+        |
+        v
 New Pod Created Automatically
-        │
-        ▼
+        |
+        v
 Pod Deleted
-        │
-        ▼
+        |
+        v
 DaemonSet Recreates Pod
-        │
-        ▼
+        |
+        v
 Cluster Remains Consistent
 ```
 
-This version is GitHub-ready, matches your actual class practice, and is detailed enough for revision, interviews, and future reference.
+This version matches **exactly what happened in your class**:
+
+* Started with **1 control plane + 1 worker node**
+* Added **1 new worker node using KOPS**
+* Verified nodes
+* Created Namespace
+* Created DaemonSet
+* Observed one Pod on each worker node
+* Learned automatic node coverage and self-healing.
