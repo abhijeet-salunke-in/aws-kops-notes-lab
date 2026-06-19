@@ -2,88 +2,93 @@
 
 ## Overview
 
-In the previous storage topics we learned:
+In previous topics we learned:
 
-### EmptyDir
+### emptyDir
+
+```text
+Container Restart
+     |
+     v
+Data Exists
+```
+
+But:
 
 ```text
 Pod Deleted
      |
      v
-Volume Deleted
-     |
-     v
-Data Lost
+Data Deleted
 ```
-
-EmptyDir provides:
-
-```text
-Shared Storage
-Temporary Storage
-Ephemeral Storage
-```
-
-but does not provide persistence.
 
 ---
 
-### HostPath
+### hostPath
 
 ```text
-Node Filesystem
-      |
-      v
-Pod Uses Data
+Pod Deleted
+     |
+     v
+Data Still Exists
 ```
 
-HostPath provides:
+because data is stored on the Node.
+
+However:
 
 ```text
-Node-Level Persistence
-```
-
-However it has a limitation:
-
-```text
-Node-1 Failure
-       |
-       v
+Node Failure
+     |
+     v
 Data Unavailable
 ```
 
-HostPath is tied to a specific node.
+and
+
+```text
+Pod Scheduled To Another Node
+     |
+     v
+Data Not Accessible
+```
+
+This makes hostPath unsuitable for most production workloads.
 
 ---
 
-# The Real Production Storage Problem
+# The Real Problem
 
-Modern applications require:
+Modern applications need:
 
 ```text
 Databases
-Jenkins
-SonarQube
-GitLab
-Prometheus
-Grafana
-ERP Applications
-Banking Applications
-E-Commerce Platforms
+
+Application Uploads
+
+Reports
+
+Logs
+
+Backups
+
+Customer Data
+
+Configuration Data
 ```
 
-These applications cannot afford data loss.
-
-Example:
+Requirements:
 
 ```text
-MySQL Pod Deleted
-```
+Data Must Survive Pod Deletion
 
-Should NOT mean:
+Data Must Survive Container Restart
 
-```text
-Database Deleted
+Storage Must Be Separate From Pods
+
+Storage Must Be Reusable
+
+Storage Must Work Across Application Lifecycles
 ```
 
 ---
@@ -93,75 +98,123 @@ Database Deleted
 Kubernetes introduced:
 
 ```text
-PersistentVolume (PV)
+Persistent Volume (PV)
 
-PersistentVolumeClaim (PVC)
+Persistent Volume Claim (PVC)
 ```
 
-These provide:
+---
+
+# Real World Analogy
+
+Imagine a company office.
+
+Storage Team:
 
 ```text
-Persistent Storage
-Storage Abstraction
-Cloud Storage Integration
-Production-Ready Storage
+Creates Storage
 ```
+
+Developers:
+
+```text
+Need Storage
+```
+
+Instead of giving developers direct AWS access:
+
+```text
+AWS Storage
+     |
+     v
+Persistent Volume
+     |
+     v
+Persistent Volume Claim
+     |
+     v
+Application
+```
+
+Storage and applications become independent.
+
+---
+
+# Why Not Directly Mount EBS Into Pods?
+
+Without Kubernetes abstraction:
+
+```text
+Application
+     |
+     v
+AWS EBS
+```
+
+Developers would need knowledge of:
+
+```text
+AWS
+
+Azure
+
+GCP
+
+Storage Configuration
+
+Volume Attachment
+```
+
+Not practical.
+
+---
+
+Kubernetes introduces abstraction:
+
+```text
+Application
+     |
+     v
+PVC
+     |
+     v
+PV
+     |
+     v
+Storage
+```
+
+Applications only request storage.
+
+Kubernetes handles the rest.
 
 ---
 
 # What is a Persistent Volume (PV)?
 
-A Persistent Volume is a storage resource available inside a Kubernetes cluster.
+Persistent Volume is a storage resource inside Kubernetes.
 
-Think of it as:
+Think:
 
 ```text
 Storage Supply
 ```
 
-Examples:
-
-```text
-AWS EBS
-AWS EFS
-Azure Disk
-Azure File Share
-NFS
-Ceph
-SAN Storage
-```
-
-Kubernetes represents these storage systems as:
-
-```text
-Persistent Volume
-```
-
----
-
-# Real Life Example
-
-Suppose a company purchases:
-
-```text
-500 GB Storage
-```
-
-from AWS.
-
-Storage Team creates:
+Example:
 
 ```text
 AWS EBS Volume
+
+10 GB
 ```
 
-Kubernetes converts it into:
+represented as:
 
 ```text
-Persistent Volume
+PersistentVolume
 ```
 
-Applications can then consume storage without knowing AWS details.
+inside Kubernetes.
 
 ---
 
@@ -169,59 +222,47 @@ Applications can then consume storage without knowing AWS details.
 
 PVC is a request for storage.
 
-Think of it as:
+Think:
 
 ```text
-Storage Request Form
+Storage Demand
 ```
 
 Example:
 
-Developer needs:
-
 ```text
-10 GB Storage
+Application Needs:
+
+6 GB Storage
 ```
 
-PVC requests:
-
-```text
-10 GB
-```
-
-Kubernetes finds a suitable PV and connects them.
+PVC requests storage from Kubernetes.
 
 ---
 
-# Hotel Analogy
+# Hotel Example
 
-Imagine a hotel.
-
-Hotel Rooms:
+Hotel:
 
 ```text
-Room 101
-Room 102
-Room 103
+100 Rooms Available
 ```
 
-Equivalent to:
+Equivalent:
 
 ```text
-Persistent Volumes
+Persistent Volume
 ```
 
 ---
 
-Customer wants a room.
-
-Customer request:
+Customer:
 
 ```text
-Need One Room
+Needs Room
 ```
 
-Equivalent to:
+Equivalent:
 
 ```text
 Persistent Volume Claim
@@ -232,7 +273,7 @@ Persistent Volume Claim
 Result:
 
 ```text
-Customer Gets Room
+Room Allocated
 ```
 
 Equivalent:
@@ -243,42 +284,7 @@ PVC Bound To PV
 
 ---
 
-# Why Kubernetes Uses PV and PVC
-
-Without PV/PVC:
-
-```text
-Developer Must Know:
-
-AWS Storage
-NFS Configuration
-Storage Provisioning
-Disk Management
-```
-
-Very complicated.
-
----
-
-Kubernetes separates responsibilities.
-
-Storage Administrator:
-
-```text
-Creates Storage
-```
-
-Application Developer:
-
-```text
-Consumes Storage
-```
-
-This separation makes infrastructure easier to manage.
-
----
-
-# Storage Architecture
+# PV and PVC Architecture
 
 ```text
 AWS EBS Volume
@@ -306,7 +312,7 @@ Containers
 
 ---
 
-# Complete Storage Flow
+# Storage Flow
 
 ```text
 Create AWS EBS
@@ -329,170 +335,81 @@ Deployment Uses PVC
         |
         v
 
-Pod Uses Storage
+Containers Access Storage
 ```
 
 ---
 
-# Understanding PV Lifecycle
+# Understanding the Storage Lifecycle
+
+Without PV/PVC:
 
 ```text
-Available
+Pod Deleted
      |
      v
-
-Bound
-     |
-     v
-
-Released
-     |
-     v
-
-Available / Failed
-```
-
----
-
-## Available
-
-Storage exists but is unused.
-
----
-
-## Bound
-
-PVC successfully attached.
-
----
-
-## Released
-
-PVC removed.
-
----
-
-## Failed
-
-Storage issue occurred.
-
----
-
-# What is Access Mode?
-
-Access Mode defines how storage can be mounted.
-
----
-
-## ReadWriteOnce (RWO)
-
-```text
-One Node
-Read + Write
-```
-
-Most AWS EBS volumes use:
-
-```text
-ReadWriteOnce
-```
-
----
-
-## ReadOnlyMany (ROX)
-
-```text
-Many Nodes
-Read Only
-```
-
----
-
-## ReadWriteMany (RWX)
-
-```text
-Many Nodes
-Read + Write
-```
-
-Common with:
-
-```text
-EFS
-NFS
-```
-
----
-
-# What is Reclaim Policy?
-
-Determines what happens after PVC deletion.
-
----
-
-## Retain
-
-```text
-PVC Deleted
-      |
-      v
-Data Remains
-```
-
----
-
-## Delete
-
-```text
-PVC Deleted
-      |
-      v
 Storage Deleted
 ```
 
 ---
 
-## Recycle
+With PV/PVC:
 
 ```text
-PVC Deleted
-      |
-      v
-Data Cleaned
-      |
-      v
-Storage Reusable
+Pod Deleted
+     |
+     v
+PVC Exists
+     |
+     v
+PV Exists
+     |
+     v
+EBS Exists
 ```
+
+Data survives.
 
 ---
 
-# AWS EBS Setup
+# AWS EBS Creation (Lab Setup)
 
-Before creating PV, create an EBS volume.
+Before creating PV:
 
 Navigate:
 
 ```text
 AWS Console
+
 → EC2
+
 → Elastic Block Store
+
 → Volumes
+
 → Create Volume
 ```
 
-Example Configuration:
+---
+
+## Volume Configuration
+
+Example:
 
 ```text
-Type: gp3
+Volume Type: gp3
+
 Size: 12 GB
-AZ: ap-south-1a
+
+Availability Zone:
+ap-south-1a
 ```
 
 ---
 
 # Important Requirement
 
-Worker Node and EBS must be in the same Availability Zone.
+The Kubernetes worker node and EBS volume must be in the same Availability Zone.
 
 Example:
 
@@ -501,23 +418,128 @@ Worker Node:
 ap-south-1a
 ```
 
-EBS:
+Then:
 
 ```text
+EBS Volume:
 ap-south-1a
 ```
 
 Otherwise:
 
 ```text
-Volume Attachment Fails
+Volume Cannot Attach
 ```
 
 ---
 
-# Step 1: Create Persistent Volume
+# Create EBS Volume
 
-## File: pv.yml
+Example:
+
+```text
+12 GB gp3 Volume
+```
+
+After creation:
+
+```text
+Copy Volume ID
+```
+
+Example:
+
+```text
+vol-0f807626fa5b8dafc
+```
+
+This ID is used in PV YAML.
+
+---
+
+# What is Access Mode?
+
+Access mode defines how storage can be mounted.
+
+Common options:
+
+```text
+ReadWriteOnce (RWO)
+
+ReadOnlyMany (ROX)
+
+ReadWriteMany (RWX)
+```
+
+---
+
+## ReadWriteOnce (RWO)
+
+Meaning:
+
+```text
+One Node Can Read And Write
+```
+
+Most AWS EBS volumes support:
+
+```text
+ReadWriteOnce
+```
+
+---
+
+# What is Reclaim Policy?
+
+Defines what happens after PVC deletion.
+
+Options:
+
+```text
+Retain
+
+Delete
+
+Recycle
+```
+
+---
+
+## Retain
+
+```text
+Keep Data
+```
+
+Storage remains.
+
+---
+
+## Delete
+
+```text
+Delete Storage
+```
+
+Volume removed.
+
+---
+
+## Recycle
+
+```text
+Clean Data
+```
+
+Storage becomes reusable.
+
+---
+
+# Practical Lab
+
+## Step 1: Create Persistent Volume
+
+### File: pv.yml
 
 ```yaml
 apiVersion: v1
@@ -531,18 +553,63 @@ spec:
     storage: 10Gi
 
   accessModes:
-  - ReadWriteOnce
+    - ReadWriteOnce
 
   persistentVolumeReclaimPolicy: Recycle
 
   awsElasticBlockStore:
-    volumeID: <your-EBS-volume-ID eg. vol-0c86f1e0fa67ad169>
+    volumeID: vol-0f807626fa5b8dafc
     fsType: ext4
 ```
 
 ---
 
-# Understanding PV YAML
+# Understanding PV YAML Line By Line
+
+## API Version
+
+```yaml
+apiVersion: v1
+```
+
+Uses Kubernetes core API.
+
+---
+
+## Kind
+
+```yaml
+kind: PersistentVolume
+```
+
+Creates a Persistent Volume object.
+
+---
+
+## Metadata
+
+```yaml
+metadata:
+  name: mypv
+```
+
+PV name:
+
+```text
+mypv
+```
+
+---
+
+## Spec
+
+```yaml
+spec:
+```
+
+Defines PV configuration.
+
+---
 
 ## Capacity
 
@@ -551,7 +618,7 @@ capacity:
   storage: 10Gi
 ```
 
-Storage available:
+Available storage:
 
 ```text
 10 GB
@@ -559,14 +626,14 @@ Storage available:
 
 ---
 
-## Access Mode
+## Access Modes
 
 ```yaml
 accessModes:
-- ReadWriteOnce
+  - ReadWriteOnce
 ```
 
-Only one node can mount the volume.
+Only one node can mount volume in read/write mode.
 
 ---
 
@@ -576,17 +643,46 @@ Only one node can mount the volume.
 persistentVolumeReclaimPolicy: Recycle
 ```
 
-Controls storage cleanup.
+After PVC deletion:
+
+```text
+Storage Cleaned
+Ready For Reuse
+```
 
 ---
 
-## AWS EBS Mapping
+## AWS EBS Section
 
 ```yaml
 awsElasticBlockStore:
 ```
 
-Connects Kubernetes PV to AWS EBS.
+Tells Kubernetes:
+
+```text
+Use AWS EBS Volume
+```
+
+---
+
+## Volume ID
+
+```yaml
+volumeID: vol-0f807626fa5b8dafc
+```
+
+Actual AWS EBS volume.
+
+---
+
+## Filesystem Type
+
+```yaml
+fsType: ext4
+```
+
+Linux filesystem used by volume.
 
 ---
 
@@ -606,14 +702,49 @@ Expected:
 
 ```text
 NAME   CAPACITY   ACCESS MODES   STATUS
+
 mypv   10Gi       RWO            Available
+```
+
+---
+
+# PV States
+
+## Available
+
+```text
+Waiting For PVC
+```
+
+---
+
+## Bound
+
+```text
+PVC Connected
+```
+
+---
+
+## Released
+
+```text
+PVC Deleted
+```
+
+---
+
+## Failed
+
+```text
+Storage Problem
 ```
 
 ---
 
 # Step 2: Create Persistent Volume Claim
 
-## File: pvc.yml
+### File: pvc.yml
 
 ```yaml
 apiVersion: v1
@@ -623,8 +754,11 @@ metadata:
   name: mypvc
 
 spec:
+
+  storageClassName: ""
+
   accessModes:
-  - ReadWriteOnce
+    - ReadWriteOnce
 
   resources:
     requests:
@@ -633,21 +767,81 @@ spec:
 
 ---
 
-# Understanding PVC YAML
+# Understanding PVC YAML Line By Line
 
-Developer requests:
+## API Version
 
-```text
-6 GB Storage
+```yaml
+apiVersion: v1
 ```
 
-PV provides:
+Core Kubernetes API.
 
-```text
-10 GB Storage
+---
+
+## Kind
+
+```yaml
+kind: PersistentVolumeClaim
 ```
 
-Kubernetes binds them.
+Creates PVC object.
+
+---
+
+## Metadata
+
+```yaml
+metadata:
+  name: mypvc
+```
+
+PVC name.
+
+---
+
+## Storage Class Name
+
+```yaml
+storageClassName: ""
+```
+
+Important.
+
+Means:
+
+```text
+Do NOT Use Dynamic Provisioning
+
+Use Existing PV
+```
+
+This is required for your lab setup.
+
+---
+
+## Access Mode
+
+```yaml
+accessModes:
+  - ReadWriteOnce
+```
+
+Must match PV access mode.
+
+---
+
+## Requested Storage
+
+```yaml
+storage: 6Gi
+```
+
+Application requests:
+
+```text
+6 GB
+```
 
 ---
 
@@ -667,12 +861,13 @@ Expected:
 
 ```text
 NAME    STATUS   VOLUME
+
 mypvc   Bound    mypv
 ```
 
 ---
 
-Verify PV:
+# Verify Binding
 
 ```bash
 kubectl get pv
@@ -681,32 +876,39 @@ kubectl get pv
 Expected:
 
 ```text
-STATUS: Bound
+mypv
+Bound
 ```
 
 ---
 
-# Understanding Binding
+# Binding Logic
+
+PV:
 
 ```text
-PV Capacity  = 10 GB
-
-PVC Request  = 6 GB
+10 GB
 ```
 
-Since:
+PVC:
 
 ```text
-10 GB >= 6 GB
+6 GB
 ```
 
-Binding succeeds.
+Result:
+
+```text
+10 >= 6
+```
+
+Binding successful.
 
 ---
 
 # Step 3: Create Deployment Using PVC
 
-## File: my-deploy-pvc.yml
+### File: my-deploy-pvc.yml
 
 ```yaml
 apiVersion: apps/v1
@@ -750,37 +952,27 @@ spec:
 
         volumeMounts:
         - name: myvolume2
-          mountPath: /myconti2
+          mountPath: /mycont2
 ```
 
 ---
 
-# Deployment Architecture
+# Understanding Deployment Storage Flow
 
 ```text
+Container
+     |
+     v
+Volume Mount
+     |
+     v
+PVC
+     |
+     v
+PV
+     |
+     v
 AWS EBS
-    |
-    v
-
-Persistent Volume
-    |
-    v
-
-Persistent Volume Claim
-    |
-    v
-
-Deployment
-    |
-    v
-
-Pod
-    |
-+-----------+
-|           |
-v           v
-
-cont1     cont2
 ```
 
 ---
@@ -803,9 +995,9 @@ kubectl get pods
 
 ---
 
-# Practical Testing
+# Step 4: Test Shared Storage
 
-## Step 1: Get Pod Name
+Get Pod Name:
 
 ```bash
 kubectl get pods
@@ -814,32 +1006,24 @@ kubectl get pods
 Example:
 
 ```text
-deploy2-65dc7d86b9-k5mgh
+deploy2-7d6db774b7-kpmng
 ```
 
 ---
 
-## Step 2: Create File From Container 1
+Enter Container 1:
 
 ```bash
-kubectl exec -it deploy2-65dc7d86b9-k5mgh -c cont1 -- /bin/bash
-```
-
-Move to mount path:
-
-```bash
-cd /mycont1
+kubectl exec -it deploy2-7d6db774b7-kpmng -c cont1 -- /bin/bash
 ```
 
 Create file:
 
 ```bash
-echo "PV PVC Test Successful" > test.txt
-```
+cd /mycont1
 
-Verify:
+echo "Hello PV PVC" > test.txt
 
-```bash
 ls
 ```
 
@@ -857,18 +1041,16 @@ exit
 
 ---
 
-## Step 3: Verify From Container 2
+Enter Container 2:
 
 ```bash
-kubectl exec -it deploy2-65dc7d86b9-k5mgh -c cont2 -- /bin/bash
+kubectl exec -it deploy2-7d6db774b7-kpmng -c cont2 -- /bin/bash
 ```
 
 Check:
 
 ```bash
-cd /myconti2
-
-ls
+ls /mycont2
 ```
 
 Expected:
@@ -877,84 +1059,54 @@ Expected:
 test.txt
 ```
 
-View content:
+View:
 
 ```bash
-cat test.txt
+cat /mycont2/test.txt
 ```
 
 Expected:
 
 ```text
-PV PVC Test Successful
-```
-
-This proves:
-
-```text
-Both Containers Share Same Persistent Storage
+Hello PV PVC
 ```
 
 ---
 
-# Persistence Verification Test
+# Step 5: Verify Persistence
 
-This is the most important test.
-
----
-
-## Step 1: Delete Pod
-
-Get Pod:
+Delete Pod:
 
 ```bash
 kubectl get pods
 ```
-
-Delete:
 
 ```bash
 kubectl delete pod <pod-name>
 ```
 
-Example:
-
-```bash
-kubectl delete pod deploy2-65dc7d86b9-k5mgh
-```
-
-Deployment automatically creates a new Pod.
+Deployment creates new Pod.
 
 ---
 
-## Step 2: Verify New Pod
+Get New Pod:
 
 ```bash
 kubectl get pods
 ```
 
-Notice:
-
-```text
-New Pod Name
-```
-
 ---
 
-## Step 3: Check Data Again
-
-Enter new Pod:
+Enter Container:
 
 ```bash
 kubectl exec -it <new-pod-name> -c cont1 -- /bin/bash
 ```
 
-Verify:
+Check:
 
 ```bash
-cd /mycont1
-
-ls
+ls /mycont1
 ```
 
 Expected:
@@ -963,184 +1115,91 @@ Expected:
 test.txt
 ```
 
-View content:
-
-```bash
-cat test.txt
-```
-
-Expected:
-
-```text
-PV PVC Test Successful
-```
+Data still exists.
 
 ---
 
-# Why Data Survived
+# Why Data Survives
 
-Because data is stored in:
+Because:
 
 ```text
-AWS EBS
+Data Stored On AWS EBS
 ```
 
 not inside:
 
 ```text
 Container
-```
 
-and not inside:
-
-```text
 Pod
+
+Node
 ```
-
-Storage exists independently.
-
----
-
-# Comparison of Storage Types
-
-| Feature                    | EmptyDir | HostPath | PV + PVC |
-| -------------------------- | -------- | -------- | -------- |
-| Shared Storage             | Yes      | Yes      | Yes      |
-| Survives Container Restart | Yes      | Yes      | Yes      |
-| Survives Pod Deletion      | No       | Yes      | Yes      |
-| Node Dependent             | No       | Yes      | No       |
-| Production Ready           | No       | Limited  | Yes      |
-| Cloud Integration          | No       | No       | Yes      |
 
 ---
 
 # Advantages of PV and PVC
 
-### True Persistence
+### Persistent Storage
 
-```text
-Pod Deleted
-     |
-     v
-Data Remains
-```
+Data survives Pod lifecycle.
 
 ---
 
-### Cloud Storage Support
+### Cloud Integration
+
+Supports:
 
 ```text
 AWS EBS
+
 AWS EFS
+
 Azure Disk
+
+Google Persistent Disk
+
 NFS
 ```
 
 ---
 
-### Storage Abstraction
+### Decoupled Storage
 
-Developers don't need infrastructure details.
+Applications do not know storage details.
 
 ---
 
 ### Production Ready
 
-Suitable for:
+Used for:
 
 ```text
 Databases
+
 Jenkins
-SonarQube
-GitLab
-ERP Systems
-Enterprise Applications
+
+Prometheus
+
+Grafana
+
+Applications
+
+Enterprise Systems
 ```
 
 ---
 
-### Independent Lifecycle
+# HostPath vs PV/PVC
 
-Storage lifecycle is separate from Pod lifecycle.
-
----
-
-# Common Troubleshooting
-
-## PVC Stuck in Pending
-
-Check:
-
-```bash
-kubectl get pv
-```
-
-Possible reason:
-
-```text
-No Matching PV Found
-```
-
----
-
-## Volume Not Attaching
-
-Check:
-
-```text
-EBS Availability Zone
-Worker Node Availability Zone
-```
-
-Must match.
-
----
-
-## Deployment Not Starting
-
-Check:
-
-```bash
-kubectl describe pod <pod-name>
-```
-
-Look for:
-
-```text
-Volume Mount Errors
-PVC Errors
-```
-
----
-
-# Cleanup
-
-Delete Deployment:
-
-```bash
-kubectl delete -f my-deploy-pvc.yml
-```
-
-Delete PVC:
-
-```bash
-kubectl delete -f pvc.yml
-```
-
-Delete PV:
-
-```bash
-kubectl delete -f pv.yml
-```
-
-Delete EBS Volume (AWS Console):
-
-```text
-EC2
-→ Volumes
-→ Select Volume
-→ Delete Volume
-```
+| Feature          | HostPath | PV/PVC |
+| ---------------- | -------- | ------ |
+| Data Persistence | Yes      | Yes    |
+| Node Dependent   | Yes      | No     |
+| Cloud Storage    | No       | Yes    |
+| Production Ready | No       | Yes    |
+| Scalable         | No       | Yes    |
 
 ---
 
@@ -1148,13 +1207,37 @@ EC2
 
 ### What is a Persistent Volume?
 
-A Kubernetes storage resource that provides persistent storage to applications.
+A cluster storage resource managed by Kubernetes.
 
 ---
 
 ### What is a Persistent Volume Claim?
 
-A request for storage made by an application.
+A request for storage by applications.
+
+---
+
+### What happens when PVC finds a matching PV?
+
+```text
+Bound State
+```
+
+---
+
+### Why is storageClassName set to empty?
+
+```text
+Use Existing Static PV
+```
+
+---
+
+### Which AWS service was used in this lab?
+
+```text
+Amazon EBS
+```
 
 ---
 
@@ -1168,66 +1251,36 @@ PVC Requests Storage
 
 ---
 
-### What is the status of a successfully connected PV and PVC?
-
-```text
-Bound
-```
-
----
-
-### Why are PV and PVC used?
-
-To provide storage independent of Pod lifecycle.
-
----
-
-### Which AWS service was used in this lab?
-
-```text
-Amazon EBS
-```
-
----
-
-### What happens if a Pod is deleted?
-
-Data remains because storage exists in the Persistent Volume.
-
----
-
 # Summary
 
 ```text
-Container Storage
-       |
-       v
-Not Persistent
-
-emptyDir
-       |
-       v
-Ephemeral Storage
-
-hostPath
-       |
-       v
-Node-Level Persistence
+AWS EBS Volume
+        |
+        v
 
 Persistent Volume
-       |
-       v
-Production Storage
+        |
+        v
 
 Persistent Volume Claim
-       |
-       v
-Storage Request
+        |
+        v
 
-AWS EBS
-       |
-       v
-Actual Storage
+Deployment
+        |
+        v
+
+Pod
+        |
+        v
+
+Containers
+
+Result:
+
+Persistent Storage
+Independent Of Pod Lifecycle
+Production Ready
 ```
 
 ## Workflow
@@ -1236,29 +1289,50 @@ Actual Storage
 Create EBS Volume
         |
         v
+
 Create PV
         |
         v
+
 Create PVC
         |
         v
-PV Bound To PVC
+
+PVC Bound To PV
         |
         v
+
 Create Deployment
         |
         v
-Create File
+
+Mount Storage
         |
         v
+
+Create Data
+        |
+        v
+
 Delete Pod
         |
         v
+
 New Pod Created
         |
         v
+
 Data Still Exists
-        |
-        v
-Persistence Verified
+```
+
+### Next Topic
+
+```text
+StorageClass
+      |
+      v
+Dynamic Provisioning
+      |
+      v
+Automatic PV Creation
 ```
