@@ -558,7 +558,7 @@ spec:
   persistentVolumeReclaimPolicy: Recycle
 
   awsElasticBlockStore:
-    volumeID: vol-0f807626fa5b8dafc
+    volumeID: <your-EBS-volume-id eg. vol-0f807626fa5b8dafc>
     fsType: ext4
 ```
 
