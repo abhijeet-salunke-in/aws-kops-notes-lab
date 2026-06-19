@@ -484,7 +484,7 @@ Example Configuration:
 
 ```text
 Type: gp3
-Size: 10 GB
+Size: 12 GB
 AZ: ap-south-1a
 ```
 
