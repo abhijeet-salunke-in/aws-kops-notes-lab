@@ -438,18 +438,19 @@ kubectl get pv
 ```yaml
 apiVersion: v1
 kind: PersistentVolumeClaim
+
 metadata:
   name: ebs-pvc
 
 spec:
+  storageClassName: ""
+
   accessModes:
-  - ReadWriteOnce
+    - ReadWriteOnce
 
   resources:
     requests:
-      storage: 5Gi
-
-  volumeName: ebs-pv
+      storage: 2Gi
 ```
 
 Apply:
