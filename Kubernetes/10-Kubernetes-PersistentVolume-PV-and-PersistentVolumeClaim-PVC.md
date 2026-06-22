@@ -544,7 +544,11 @@ kubectl delete pod -l app=notes
 
 Deployment creates new pod.
 
-Check file:
+Go to inside that Pod and Check file:
+
+```bash
+kubectl exec -it deploy/notes-app -- sh
+```
 
 ```bash
 cat /app/data/test.txt
