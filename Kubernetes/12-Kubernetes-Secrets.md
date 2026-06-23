@@ -1,4 +1,4 @@
-# Kubernetes Secrets and Sensitive Configuration Management
+# Kubernetes Secrets 
 
 ## Introduction
 
