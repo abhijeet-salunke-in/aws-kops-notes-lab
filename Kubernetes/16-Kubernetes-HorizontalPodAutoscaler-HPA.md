@@ -1517,6 +1517,12 @@ HPA cannot collect metrics and therefore cannot make scaling decisions.
 
 ---
 
+### 11. How does HPA work internally?
+
+Horizontal Pod Autoscaler (HPA) is a Kubernetes resource that automatically scales the replicas of a Deployment, ReplicaSet, or StatefulSet based on metrics such as CPU, Memory, or custom metrics. Pods do not communicate directly with HPA. Kubelet collects resource usage from the containers running on each node. Metrics Server periodically gathers these metrics from the Kubelets. HPA queries the Metrics Server, compares the current utilization with the configured target, and if the threshold is crossed, it updates the replica count of the Deployment. The Deployment then instructs the ReplicaSet to create or remove Pods.
+
+---
+
 # Summary
 
 ```
