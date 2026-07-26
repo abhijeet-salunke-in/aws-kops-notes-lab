@@ -4,8 +4,6 @@
 
 # Role & RoleBinding
 
-## RBAC = Role-Based Access Control.
-
 ## What Problem Does RBAC Solve?
 
 Imagine a company with 500 employees.
