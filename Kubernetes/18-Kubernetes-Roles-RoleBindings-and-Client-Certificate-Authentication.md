@@ -4,7 +4,7 @@
 
 # Role & RoleBinding
 
-## The full form of RBAC is **Role-Based Access Control**.
+## The full form of RBAC is Role-Based Access Control.
 
 ## What Problem Does RBAC Solve?
 
