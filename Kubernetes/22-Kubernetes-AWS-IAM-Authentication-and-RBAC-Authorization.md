@@ -1,586 +1,88 @@
-# Kubernetes AWS IAM Authentication and RBAC Authorization
+# AWS IAM Authentication in Kubernetes (kOps)
 
-## Part 1: Introduction and Theory
+## 📌 Objective
 
----
+The objective of this lab is to authenticate an **AWS IAM User** with a **Kubernetes cluster** created using **kOps**.
 
-# What Will We Learn?
-
-In the previous section, we learned how to provide Kubernetes cluster access using **Client Certificate Authentication**. In that approach, we created a Kubernetes user by generating certificates signed by the Kubernetes CA and then controlled that user's permissions using RBAC.
-
-Although this method works well, organizations that use AWS usually manage users through **AWS IAM (Identity and Access Management)** instead of creating Kubernetes certificates for every user.
-
-In this section, we will learn how to authenticate AWS IAM users with a Kubernetes cluster created using **Kops**, and then authorize those users using Kubernetes RBAC.
+Instead of using Kubernetes client certificates, we will allow an AWS IAM user to authenticate with the Kubernetes API Server using **AWS IAM Authentication**. After successful authentication, Kubernetes **RBAC (Role & RoleBinding)** will be used to authorize what the user is allowed to do inside the cluster.
 
 ---
 
-# Learning Objectives
+# What is AWS IAM Authentication?
 
-By the end of this guide, you will be able to:
+AWS IAM Authentication allows AWS IAM Users or IAM Roles to log in to a Kubernetes cluster without creating Kubernetes certificates for every user.
 
-- Enable AWS IAM Authentication in a Kops cluster.
-- Create an IAM user in AWS.
-- Map the IAM user to Kubernetes.
-- Understand the role of `aws-iam-authenticator`.
-- Configure RBAC using Roles and RoleBindings.
-- Grant namespace-specific access to an IAM user.
-- Troubleshoot common AWS Authentication issues.
+The user proves their identity using AWS IAM credentials (Access Key ID and Secret Access Key). Kubernetes verifies this identity through the **aws-iam-authenticator** component and then applies Kubernetes RBAC permissions.
 
 ---
 
-# What is Authentication?
+# Why Do We Need AWS IAM Authentication?
 
-**Authentication** is the process of verifying **who the user is**.
+In the previous lab, we authenticated users using **Client Certificates**.
 
-It answers the question:
+Although client certificates work well, they become difficult to manage when:
 
-> **"Who are you?"**
+- The organization has many users.
+- Users frequently join or leave the organization.
+- Certificate rotation becomes difficult.
+- The company already manages users in AWS IAM.
 
-If the identity is verified successfully, the user is considered authenticated.
-
-Examples of authentication include:
-
-- Username and Password
-- Client Certificates
-- AWS IAM User
-- IAM Roles
-- OIDC
-- LDAP
-
-Authentication **only verifies identity**. It does **not** decide what the user is allowed to do.
-
----
-
-# What is Authorization?
-
-After authentication is successful, Kubernetes performs **Authorization**.
-
-Authorization answers the question:
-
-> **"What are you allowed to do?"**
-
-Kubernetes uses **RBAC (Role-Based Access Control)** to determine the permissions of an authenticated user.
-
-Examples:
-
-- Can the user list Pods?
-- Can the user create Deployments?
-- Can the user delete Services?
-- Can the user access only one namespace?
-- Can the user manage the entire cluster?
+Instead of creating Kubernetes certificates for every employee, we can simply create an AWS IAM User and grant Kubernetes access.
 
 ---
 
 # Authentication vs Authorization
 
-| Authentication | Authorization |
-|---------------|---------------|
-| Verifies identity | Verifies permissions |
-| Answers **Who are you?** | Answers **What can you do?** |
-| Happens first | Happens after authentication |
-| AWS IAM, Certificates, OIDC | RBAC, Roles, ClusterRoles |
+Authentication and Authorization are two completely different processes.
 
----
+## Authentication (Who are you?)
 
-# Recap: Client Certificate Authentication
+Authentication verifies the identity of the user.
 
-Previously, we created a Kubernetes user using **Client Certificates**.
+Examples:
 
-The process was:
-
-```
-Generate Private Key
-        │
-        ▼
-Generate CSR
-        │
-        ▼
-Sign CSR using Kubernetes CA
-        │
-        ▼
-Create kubeconfig
-        │
-        ▼
-Authenticate to Kubernetes
-        │
-        ▼
-RBAC decides permissions
-```
-
-Although this method is secure, managing certificates becomes difficult when many users join or leave an organization.
-
----
-
-# Why AWS IAM Authentication?
-
-Most organizations already manage their employees using **AWS IAM**.
-
-Instead of creating Kubernetes certificates for every developer, DevOps engineer, or administrator, we can reuse their existing IAM identities.
-
-This provides several advantages:
-
-- Centralized user management
-- No need to create Kubernetes certificates
-- Easier onboarding and offboarding
-- Better auditing using AWS CloudTrail
-- Integration with existing AWS security policies
-
----
-
-# Why Do We Need aws-iam-authenticator?
-
-Kubernetes does **not** understand AWS IAM users directly.
-
-When an IAM user sends a request, Kubernetes only receives an HTTPS request. It does not know whether that request came from a valid IAM user.
-
-The **aws-iam-authenticator** acts as a bridge between AWS IAM and Kubernetes.
-
-Its responsibilities are:
-
-- Verify AWS IAM identity.
-- Validate AWS authentication token.
-- Map IAM users to Kubernetes usernames.
-- Pass the authenticated username to the Kubernetes API Server.
-
-Without the authenticator, Kubernetes cannot authenticate AWS IAM users.
-
----
-
-# Authentication Flow
-
-The complete authentication process looks like this:
-
-```
-IAM User
-    │
-    ▼
-AWS CLI
-    │
-    ▼
-Authentication Token
-    │
-    ▼
-aws-iam-authenticator
-    │
-    ▼
-Kubernetes API Server
-    │
-Authentication Successful
-    │
-    ▼
-RBAC
-    │
-    ▼
-Allow or Deny Request
-```
-
----
-
-# Authentication and Authorization Flow
-
-```
-                User Request
-                     │
-                     ▼
-          AWS IAM Authentication
-                     │
-                     ▼
-      aws-iam-authenticator verifies identity
-                     │
-                     ▼
-          Kubernetes API Server
-                     │
-                     ▼
-      RBAC (Role / RoleBinding)
-                     │
-          ┌──────────┴──────────┐
-          ▼                     ▼
-      Access Allowed      Access Denied
-```
-
----
-
-# Real Lab Scenario
-
-In this practical, we will perform the following tasks:
-
-1. Enable AWS Authentication in a Kops cluster.
-2. Create an IAM User.
-3. Generate Access Keys.
-4. Configure AWS CLI for the IAM user.
-5. Configure the `aws-iam-authenticator`.
-6. Map the IAM user to Kubernetes.
-7. Create a Namespace.
-8. Create a Role.
-9. Create a RoleBinding.
-10. Verify that the IAM user can access only the permitted namespace.
-
----
-
-# Prerequisites
-
-Before starting this practical, ensure the following:
-
-- AWS Account
-- Running Kops Kubernetes Cluster
-- kubectl installed
-- AWS CLI installed
-- Kops installed
-- Cluster administrator access
-- RBAC enabled
-
----
-
-# Key Components Used
-
-| Component | Purpose |
-|-----------|---------|
-| AWS IAM | User Identity |
-| aws-iam-authenticator | Authenticates IAM Users |
-| ConfigMap | Maps IAM Users to Kubernetes Users |
-| Role | Defines Namespace Permissions |
-| RoleBinding | Assigns Role to User |
-| Namespace | Restricts Resource Access |
-| Kubernetes API Server | Processes Requests |
-
----
-
-# Important Note
-
-Remember the sequence:
-
-```
-Authentication
-        ↓
-Authorization
-        ↓
-Access Granted
-```
-
-If Authentication fails, Authorization is never executed.
-
-Similarly, even if Authentication succeeds, the user still cannot access resources unless appropriate RBAC permissions are assigned.
-
----
-
-## What's Next?
-
-In **Part 2**, we will enable AWS IAM Authentication in the Kops cluster by updating the cluster configuration, performing a rolling update, and verifying that the `aws-iam-authenticator` component is deployed successfully.
-
-# Part 2: Enable AWS IAM Authentication in Kops Cluster
-
----
-
-# Objective
-
-By default, a Kubernetes cluster created using Kops uses **Client Certificate Authentication** for accessing the cluster.
-
-To allow AWS IAM Users to authenticate with Kubernetes, we must enable **AWS Authentication** in the cluster configuration.
-
-After enabling it, Kops will deploy the **aws-iam-authenticator** component, which verifies AWS IAM identities before allowing them to communicate with the Kubernetes API Server.
-
----
-
-# Step 1: Check Current Cluster Configuration
-
-Before making any changes, verify whether AWS Authentication is already enabled.
-
-```bash
-kops get cluster abhi.k8s.local -o yaml
-```
-
-### Example Output
-
-```yaml
-spec:
-  authorization:
-    rbac: {}
-```
-
-If you do not see:
-
-```yaml
-authentication:
-  aws: {}
-```
-
-then AWS Authentication is **not enabled**.
-
-### Why?
-
-We first inspect the current cluster configuration so that we know whether AWS Authentication already exists or not.
-
----
-
-# Step 2: Edit the Cluster Configuration
-
-Open the cluster configuration.
-
-```bash
-kops edit cluster abhi.k8s.local
-```
-
-Locate the **api** section.
+- Client Certificate Authentication
+- AWS IAM Authentication
+- OIDC Authentication
+- Service Account Authentication
 
 Example:
 
-```yaml
-api:
-  loadBalancer:
-    class: Network
-    type: Public
+```
+IAM User:
+Ramdev
 ```
 
-Add the following section just below it (or anywhere under `spec`):
-
-```yaml
-authentication:
-  aws: {}
-```
-
-The configuration should now look similar to:
-
-```yaml
-spec:
-
-  api:
-    loadBalancer:
-      class: Network
-      type: Public
-
-  authentication:
-    aws: {}
-
-  authorization:
-    rbac: {}
-```
-
-Save and exit.
-
-### Why?
-
-This tells Kops to enable AWS IAM Authentication for this Kubernetes cluster.
-
-Without this configuration, Kubernetes will continue accepting only certificate-based authentication.
+Kubernetes verifies whether this IAM User is genuine.
 
 ---
 
-# Step 3: Update the Cluster
+## Authorization (What are you allowed to do?)
 
-After modifying the cluster configuration, update the cluster.
+After authentication succeeds, Kubernetes checks what the authenticated user is allowed to do.
 
-```bash
-kops update cluster abhi.k8s.local --yes
-```
+Authorization is handled using Kubernetes RBAC objects such as:
 
-### Sample Output
-
-```
-Cluster is starting rolling update.
-```
-
-### Why?
-
-The configuration stored in the Kops State Store is only a desired configuration.
-
-`kops update cluster` applies that configuration to AWS resources.
-
-Without this command, the changes remain only in the State Store and are never applied to the running cluster.
-
----
-
-# Step 4: Perform a Rolling Update
-
-Apply the changes to the Kubernetes nodes.
-
-```bash
-kops rolling-update cluster abhi.k8s.local --yes
-```
-
-### Why?
-
-Some cluster changes require recreating or updating the control plane and worker nodes.
-
-A rolling update replaces the instances one by one so that the new configuration becomes active without completely shutting down the cluster.
-
----
-
-# Note About Rolling Update
-
-During our lab, we encountered the following error:
-
-```text
-Unable to reach the kubernetes API
-
-dial tcp ... i/o timeout
-```
-
-This happened because the control plane was being recreated during the rolling update.
-
-After waiting a few minutes for the new control plane instance to become Ready, the cluster became healthy again.
-
-You can verify the cluster using:
-
-```bash
-kubectl get nodes
-```
+- Role
+- ClusterRole
+- RoleBinding
+- ClusterRoleBinding
 
 Example:
 
-```text
-NAME                    STATUS   ROLES
-i-058707293523e5bc7     Ready    control-plane
-i-04c1054d97d310728     Ready    node
 ```
+Ramdev
 
----
+↓
 
-# Step 5: Verify AWS Authentication is Enabled
+Can:
+✔ Get Pods
+✔ List Pods
 
-Check the cluster configuration again.
-
-```bash
-kops get cluster abhi.k8s.local -o yaml
+Cannot:
+✘ Delete Pods
+✘ Create Deployments
 ```
-
-Expected output:
-
-```yaml
-authentication:
-  aws: {}
-```
-
-### Why?
-
-This confirms that AWS Authentication has been successfully enabled in the cluster configuration.
-
----
-
-# Step 6: Verify aws-iam-authenticator Pod
-
-List the pods in the `kube-system` namespace.
-
-```bash
-kubectl get pods -n kube-system
-```
-
-Initially, we observed:
-
-```text
-aws-iam-authenticator-xxxxx   0/1   ContainerCreating
-```
-
-### Why?
-
-When AWS Authentication is enabled, Kops automatically deploys the **aws-iam-authenticator** DaemonSet.
-
-This component is responsible for validating AWS IAM identities.
-
-At this stage, the pod may still be starting because its required ConfigMap has not yet been created.
-
----
-
-# Step 7: Investigate the Pending Pod
-
-Describe the pod to identify the reason it is not running.
-
-```bash
-kubectl describe pod aws-iam-authenticator-xxxxx -n kube-system
-```
-
-In our lab, the Events section showed:
-
-```text
-MountVolume.SetUp failed for volume "config"
-
-configmap "aws-iam-authenticator" not found
-```
-
-### Why?
-
-The pod mounts a ConfigMap named:
-
-```text
-aws-iam-authenticator
-```
-
-Since the ConfigMap does not yet exist, Kubernetes cannot mount it into the container.
-
-As a result:
-
-- The container cannot start.
-- The pod remains in the **ContainerCreating** state.
-
-This is expected and will be fixed in the next part by creating the required ConfigMap.
-
----
-
-# Summary
-
-In this part, we:
-
-- Checked the existing cluster configuration.
-- Enabled AWS Authentication.
-- Updated the cluster configuration.
-- Performed a rolling update.
-- Verified that AWS Authentication was enabled.
-- Observed the `aws-iam-authenticator` pod.
-- Investigated why the pod remained in `ContainerCreating`.
-- Identified the root cause: **Missing ConfigMap**.
-
----
-
-## What's Next?
-
-In **Part 3**, we will:
-
-- Create the `aws-auth.yml` ConfigMap.
-- Apply the ConfigMap.
-- Restart the `aws-iam-authenticator` pod.
-- Verify that the pod changes from `ContainerCreating` to `Running`.
-- Understand how IAM users are mapped to Kubernetes identities.
-
-# Part 3: Configure aws-iam-authenticator (IAM User Mapping)
-
----
-
-# Objective
-
-In the previous part, we enabled AWS IAM Authentication in our Kops cluster.
-
-During verification, we noticed that the **aws-iam-authenticator** pod was stuck in the **ContainerCreating** state.
-
-After describing the pod, we discovered the root cause:
-
-```text
-MountVolume.SetUp failed for volume "config"
-
-configmap "aws-iam-authenticator" not found
-```
-
-This happened because the authenticator pod requires a ConfigMap that contains the mapping between **AWS IAM Users** and **Kubernetes Users**.
-
-In this part, we will create that ConfigMap and make the authenticator functional.
-
----
-
-# Understanding the Problem
-
-The authenticator pod mounts a ConfigMap named:
-
-```text
-aws-iam-authenticator
-```
-
-Inside this ConfigMap, Kubernetes stores information such as:
-
-- Which AWS IAM User is allowed
-- What Kubernetes username it becomes
-- Which Kubernetes groups it belongs to
-
-Without this ConfigMap, the authenticator has no information about valid IAM users.
-
-Therefore, the pod cannot start.
 
 ---
 
@@ -588,35 +90,479 @@ Therefore, the pod cannot start.
 
 ```
 AWS IAM User
-      │
-      ▼
+       │
+       ▼
+AWS Access Key
+       │
+       ▼
 aws-iam-authenticator
-      │
-Reads ConfigMap
-      │
-      ▼
-Maps IAM User
-      │
-      ▼
-Kubernetes Username
-      │
-      ▼
-RBAC Authorization
+       │
+       ▼
+Kubernetes API Server
+       │
+(Authentication Successful)
+       │
+       ▼
+RBAC
+(Role / RoleBinding)
+       │
+       ▼
+Allowed Operations
 ```
 
 ---
 
-# Step 1: Create aws-auth.yml
+# Lab Architecture
 
-Create the configuration file.
+```
+                 AWS IAM
+
+             +----------------+
+             | IAM User       |
+             | Ramdev         |
+             +----------------+
+                     │
+             Access Key / Secret Key
+                     │
+                     ▼
+      +-------------------------------+
+      | aws-iam-authenticator         |
+      | (Running inside Kubernetes)   |
+      +-------------------------------+
+                     │
+                     ▼
+          Kubernetes API Server
+                     │
+          Authentication Successful
+                     │
+                     ▼
+      Role + RoleBinding (RBAC)
+                     │
+                     ▼
+          Namespace: devlop
+                     │
+                     ▼
+           Allowed Kubernetes Actions
+```
+
+---
+
+# Lab Workflow
+
+During this lab we will perform the following steps:
+
+1. Check whether AWS Authentication is enabled.
+2. Create an AWS IAM User.
+3. Generate Access Keys for the IAM User.
+4. Enable AWS Authentication in the kOps cluster.
+5. Update the Kubernetes cluster.
+6. Verify the AWS IAM Authenticator Pod.
+7. Troubleshoot the Pod if it is not running.
+8. Create the Authentication ConfigMap.
+9. Restart the Authenticator Pod.
+10. Verify the Pod is running.
+11. Create a Namespace.
+12. Create a Role.
+13. Create a RoleBinding.
+14. Test authentication using the IAM User.
+15. Configure AWS CLI for the IAM User.
+16. Verify the authenticated identity.
+17. Test RBAC permissions.
+
+---
+
+# Prerequisites
+
+Before starting this lab, make sure you have:
+
+- Running Kubernetes Cluster created using kOps
+- AWS CLI installed
+- kubectl installed
+- kOps installed
+- Root/Admin access to the cluster
+- Access to the kOps State Store (S3 Bucket)
+- Internet connectivity
+
+---
+
+> **Note**
+>
+> In this lab, **AWS IAM** is used only for **Authentication**, whereas **Kubernetes RBAC** is responsible for **Authorization**.
+>
+> Authentication answers:
+>
+> **"Who are you?"**
+>
+> Authorization answers:
+>
+> **"What are you allowed to do?"**
+
+# Part 2: Enable AWS Authentication in the Cluster
+
+In this section, we will prepare our Kubernetes cluster to use **AWS IAM Authentication**.
+
+At this stage, users are still authenticated using **Client Certificates**. We will enable AWS Authentication so that IAM Users can authenticate to the Kubernetes API Server.
+
+---
+
+# Step 1: Check Whether AWS Authentication is Enabled
+
+Before making any changes, first verify whether AWS Authentication is already enabled in the cluster.
+
+### Command
+
+```bash
+kops get cluster abhi.k8s.local -o yaml
+```
+
+Example Output
+
+```yaml
+spec:
+  authentication:
+    aws: {}
+```
+
+If the `authentication` section is not present, AWS Authentication is **not enabled**.
+
+---
+
+## Why?
+
+Before enabling any feature, we should always verify the current cluster configuration.
+
+This prevents unnecessary configuration changes and helps us understand the current state of the cluster.
+
+---
+
+# Step 2: Create an AWS IAM User
+
+Create a new IAM User that will later authenticate to the Kubernetes cluster.
+
+### Command
+
+```bash
+aws iam create-user --user-name Ramdev
+```
+
+Example Output
+
+```json
+{
+    "User": {
+        "UserName": "Ramdev",
+        "Arn": "arn:aws:iam::<ACCOUNT-ID>:user/Ramdev"
+    }
+}
+```
+
+---
+
+## Why?
+
+Kubernetes does not authenticate IAM users automatically.
+
+First, an IAM User must exist in AWS before we can map that user to Kubernetes.
+
+---
+
+# Step 3: Generate Access Keys
+
+Create an Access Key for the IAM User.
+
+### Command
+
+```bash
+aws iam create-access-key --user-name Ramdev
+```
+
+Example Output
+
+```json
+{
+    "AccessKey": {
+        "AccessKeyId": "AKIAxxxxxxxx",
+        "SecretAccessKey": "xxxxxxxxxxxxxxxx"
+    }
+}
+```
+
+> **Important**
+>
+> Save the **Access Key ID** and **Secret Access Key** safely.
+>
+> The Secret Access Key is shown **only once** by AWS.
+
+---
+
+## Why?
+
+The IAM User will use these credentials to authenticate with AWS.
+
+Later, the AWS CLI will use these credentials to obtain a temporary authentication token for Kubernetes.
+
+---
+
+# Step 4: Enable AWS Authentication
+
+Edit the cluster configuration.
+
+### Command
+
+```bash
+kops edit cluster abhi.k8s.local
+```
+
+Locate the API configuration and add the following section.
+
+```yaml
+spec:
+  api:
+    loadBalancer:
+      type: Public
+
+  authentication:
+    aws: {}
+```
+
+Save and exit.
+
+---
+
+## Why?
+
+By default, the Kubernetes API Server only accepts certificate-based authentication.
+
+Adding
+
+```yaml
+authentication:
+  aws: {}
+```
+
+tells **kOps** to enable AWS IAM Authentication.
+
+After applying this configuration, kOps deploys the **aws-iam-authenticator** component inside the cluster.
+
+This component is responsible for validating AWS IAM Users.
+
+---
+
+# Step 5: Update the Cluster
+
+The changes made in the cluster configuration are only stored in the kOps State Store.
+
+They are **not yet applied** to the running cluster.
+
+Apply the changes.
+
+### Command
+
+```bash
+kops update cluster abhi.k8s.local --yes
+```
+
+Example Output
+
+```
+Cluster is starting rolling update...
+```
+
+---
+
+Next, perform a rolling update.
+
+### Command
+
+```bash
+kops rolling-update cluster abhi.k8s.local --yes
+```
+
+This recreates the nodes one by one with the updated configuration.
+
+---
+
+## Verify the Cluster
+
+After the rolling update completes, verify that all nodes are ready.
+
+```bash
+kubectl get nodes
+```
+
+Example Output
+
+```text
+NAME                  STATUS   ROLES           AGE
+i-xxxxxxxxxxxx        Ready    control-plane
+i-yyyyyyyyyyyy        Ready    node
+```
+
+---
+
+You can also validate the cluster.
+
+```bash
+kops validate cluster
+```
+
+Initially, you may see validation errors similar to:
+
+```text
+VALIDATION ERRORS
+
+Pod kube-system/aws-iam-authenticator is pending
+```
+
+This is expected because the **aws-iam-authenticator** pod has been created but is not yet fully configured.
+
+We will fix this in the next section.
+
+---
+
+## Why Update the Cluster?
+
+Editing the cluster configuration only updates the **desired state** stored in the kOps State Store (S3).
+
+`kops update cluster` applies those changes to AWS resources.
+
+`kops rolling-update cluster` recreates the instances so they start using the new configuration.
+
+Without these commands, AWS Authentication will **not** be enabled.
+
+---
+
+## Summary
+
+At this stage, we have completed the following:
+
+- Verified the current authentication configuration.
+- Created an AWS IAM User.
+- Generated Access Keys.
+- Enabled AWS Authentication in the cluster configuration.
+- Updated the cluster.
+- Performed a rolling update.
+- Verified the cluster status.
+
+In the next section, we will verify whether the **aws-iam-authenticator** pod is running and troubleshoot it if it remains in the **Pending** state.
+
+# Part 3: Configure AWS IAM Authenticator
+
+After enabling AWS Authentication and updating the cluster, kOps deploys the **aws-iam-authenticator** Pod.
+
+Its job is to authenticate AWS IAM Users before allowing them to access the Kubernetes API Server.
+
+However, immediately after deployment, the Pod may remain in the **Pending** or **ContainerCreating** state because the required ConfigMap has not yet been created.
+
+In this section, we will troubleshoot the issue and configure the authenticator.
+
+---
+
+# Step 6: Check the AWS IAM Authenticator Pod
+
+First, verify whether the AWS IAM Authenticator Pod is running.
+
+### Command
+
+```bash
+kubectl get pods -n kube-system
+```
+
+Example Output
+
+```text
+NAME                                   READY   STATUS              AGE
+
+aws-iam-authenticator-xxxxx            0/1     ContainerCreating   2m
+```
+
+or
+
+```text
+NAME                                   READY   STATUS     AGE
+
+aws-iam-authenticator-xxxxx            0/1     Pending    2m
+```
+
+---
+
+## Why?
+
+Whenever a new component is deployed, we should verify whether it has started successfully.
+
+If the Pod is not running, Kubernetes is indicating that something is preventing it from starting.
+
+---
+
+# Step 7: Describe the Pending Pod
+
+If the Pod is stuck in the **Pending** or **ContainerCreating** state, inspect it to determine the root cause.
+
+### Command
+
+```bash
+kubectl describe pod aws-iam-authenticator-xxxxx -n kube-system
+```
+
+Scroll to the **Events** section.
+
+Example Output
+
+```text
+Events:
+
+Warning  FailedMount
+
+MountVolume.SetUp failed for volume "config":
+
+configmap "aws-iam-authenticator" not found
+```
+
+---
+
+## Root Cause
+
+The Pod is trying to mount a ConfigMap named:
+
+```text
+aws-iam-authenticator
+```
+
+but Kubernetes cannot find it.
+
+Without this ConfigMap, the authenticator has no configuration and therefore cannot start.
+
+---
+
+## Why?
+
+The **aws-iam-authenticator** Pod reads its configuration from a ConfigMap.
+
+That ConfigMap contains:
+
+- Cluster Name
+- IAM Users
+- IAM Roles
+- Kubernetes User Mapping
+- Kubernetes Groups
+
+Since the ConfigMap does not exist yet, Kubernetes cannot mount it inside the Pod.
+
+As a result, the Pod remains stuck in the **ContainerCreating** state.
+
+---
+
+# Step 8: Create the Authentication ConfigMap
+
+Now create the configuration file.
+
+### Create File
 
 ```bash
 vim aws-auth.yml
 ```
 
----
-
-# Step 2: Add the Configuration
+Add the following configuration.
 
 ```yaml
 apiVersion: v1
@@ -631,162 +577,35 @@ data:
     clusterID: abhi.k8s.local
 
     mapUsers:
-      - userarn: arn:aws:iam::144410074489:user/Ramdev
+      - userarn: arn:aws:iam::<ACCOUNT-ID>:user/Ramdev
         username: Ramdev
         groups:
           - developers
 ```
 
----
-
-# Understanding Every Field
-
-## apiVersion
-
-```yaml
-apiVersion: v1
-```
-
-Specifies the Kubernetes API version.
+Save the file.
 
 ---
 
-## Kind
-
-```yaml
-kind: ConfigMap
-```
-
-Creates a ConfigMap object.
-
----
-
-## Metadata
-
-```yaml
-metadata:
-  name: aws-iam-authenticator
-```
-
-The name **must exactly match** the ConfigMap expected by the authenticator pod.
-
-If the name is different, the pod cannot mount it.
-
----
-
-## Namespace
-
-```yaml
-namespace: kube-system
-```
-
-The authenticator pod runs inside the **kube-system** namespace.
-
-Therefore, the ConfigMap must also exist in the same namespace.
-
----
-
-## clusterID
-
-```yaml
-clusterID: abhi.k8s.local
-```
-
-This must match your Kops cluster name.
-
-Example:
-
-```text
-abhi.k8s.local
-```
-
----
-
-## mapUsers
-
-```yaml
-mapUsers:
-```
-
-This section maps AWS IAM Users to Kubernetes Users.
-
-You can map one user or multiple users.
-
----
-
-## userarn
-
-```yaml
-userarn: arn:aws:iam::144410074489:user/Ramdev
-```
-
-This is the AWS IAM User ARN.
-
-Whenever this IAM User authenticates successfully, Kubernetes recognizes it.
-
----
-
-## username
-
-```yaml
-username: Ramdev
-```
-
-This becomes the Kubernetes username.
-
-Later, RBAC refers to this username.
-
-For example:
-
-```yaml
-subjects:
-
-- kind: User
-  name: Ramdev
-```
-
-Notice that this name matches exactly.
-
----
-
-## groups
-
-```yaml
-groups:
-  - developers
-```
-
-This assigns the Kubernetes group.
-
-Groups are useful when granting permissions to multiple users at once.
-
-Although we will use **RoleBinding** directly with the user in this practical, group mapping is still considered a best practice.
-
----
-
-# Step 3: Create the ConfigMap
-
-Apply the configuration.
+Apply the ConfigMap.
 
 ```bash
 kubectl apply -f aws-auth.yml
 ```
 
-Expected Output
+Example Output
 
 ```text
 configmap/aws-iam-authenticator created
 ```
 
----
-
-# Step 4: Verify ConfigMap
+Verify the ConfigMap.
 
 ```bash
 kubectl get configmap -n kube-system
 ```
 
-Example
+Example Output
 
 ```text
 NAME
@@ -794,250 +613,169 @@ NAME
 aws-iam-authenticator
 ```
 
-You can also inspect it.
+---
 
-```bash
-kubectl get configmap aws-iam-authenticator -n kube-system -o yaml
-```
+## Why?
 
-Verify that the data contains:
+The ConfigMap provides the configuration required by the AWS IAM Authenticator Pod.
 
-```yaml
-clusterID: abhi.k8s.local
+It tells Kubernetes:
 
-mapUsers:
-```
+- Which cluster this configuration belongs to.
+- Which AWS IAM User is allowed.
+- What Kubernetes username should be assigned.
+- Which Kubernetes groups the user belongs to.
+
+Without this ConfigMap, AWS IAM Authentication cannot work.
 
 ---
 
-# Step 5: Check the Pod
+# Step 9: Verify the Pod Again
+
+Check whether the Pod has started.
+
+### Command
 
 ```bash
 kubectl get pods -n kube-system
 ```
 
-Now the pod should become
-
-```text
-Running
-```
-
-Sometimes the pod still remains in the old state because it was created before the ConfigMap existed.
+Sometimes the Pod is still not running because Kubernetes attempted to start it **before** the ConfigMap was created.
 
 ---
 
-# Step 6: Restart the Pod
+## Why?
 
-Delete the existing pod.
+Although the ConfigMap now exists, the existing Pod may still be using its previous failed state.
+
+In such cases, restarting the Pod is the simplest solution.
+
+---
+
+# Step 10: Restart the AWS IAM Authenticator Pod
+
+Delete the existing Pod.
 
 ```bash
 kubectl delete pod aws-iam-authenticator-xxxxx -n kube-system
 ```
 
-Do not worry.
+Example Output
 
-The pod belongs to a **DaemonSet**.
+```text
+pod "aws-iam-authenticator-xxxxx" deleted
+```
 
-Therefore, Kubernetes automatically creates a new one.
+Since this Pod is managed by a **DaemonSet**, Kubernetes automatically creates a new one.
 
----
-
-# Step 7: Verify Again
+Verify the new Pod.
 
 ```bash
 kubectl get pods -n kube-system
 ```
 
-Expected Output
+Example Output
 
 ```text
-aws-iam-authenticator-xxxxx    1/1 Running
-```
+NAME                                   READY   STATUS    AGE
 
-Now the authenticator is successfully running.
-
----
-
-# What Changed?
-
-Before:
-
-```
-aws-iam-authenticator
-
-↓
-
-ConfigMap Missing
-
-↓
-
-ContainerCreating
-```
-
-After:
-
-```
-ConfigMap Created
-
-↓
-
-Pod Restarted
-
-↓
-
-ConfigMap Mounted
-
-↓
-
-Pod Running
+aws-iam-authenticator-yyyyy            1/1     Running   15s
 ```
 
 ---
 
-# Why Do We Need This ConfigMap?
+## Why?
 
-Without this ConfigMap:
+Deleting the Pod does **not** remove the application.
 
-❌ Kubernetes does not know which IAM Users are allowed.
+The DaemonSet controller immediately creates a new Pod.
 
-Without it:
-
-- IAM User cannot authenticate.
-- Kubernetes cannot map IAM User.
-- RBAC cannot be executed.
-
-This ConfigMap acts as the bridge between **AWS IAM** and **Kubernetes RBAC**.
+This new Pod now finds the ConfigMap, mounts it successfully, loads the IAM User mappings, and starts normally.
 
 ---
 
 # Summary
 
-In this part, we:
+At this stage, we have successfully:
 
-- Understood why the authenticator pod was pending.
-- Learned the purpose of the ConfigMap.
-- Created the `aws-auth.yml` file.
-- Mapped the AWS IAM User (`Ramdev`) to Kubernetes.
+- Verified the AWS IAM Authenticator Pod.
+- Identified why the Pod was stuck.
+- Diagnosed the issue using `kubectl describe pod`.
+- Found that the required ConfigMap was missing.
+- Created the `aws-iam-authenticator` ConfigMap.
 - Applied the ConfigMap.
-- Restarted the authenticator pod.
-- Verified that the pod was running successfully.
+- Restarted the Pod.
+- Verified that the Pod is now running successfully.
 
-At this stage, AWS IAM Authentication is enabled, and the cluster now knows **which IAM user can be recognized**.
+The cluster is now capable of authenticating AWS IAM Users. In the next section, we will configure Kubernetes RBAC by creating a Namespace, Role, and RoleBinding for the IAM User.
 
-However, the IAM user still **does not have permission to perform Kubernetes operations**.
+# Part 4: Configure Kubernetes RBAC for the IAM User
 
-Authentication is complete, but Authorization is still pending.
+AWS IAM Authentication only verifies the identity of the user.
 
----
+It **does not grant any permissions** inside the Kubernetes cluster.
 
-## What's Next?
+To allow the IAM User to perform Kubernetes operations, we must configure **Role-Based Access Control (RBAC)**.
 
-In **Part 4**, we will:
-
-- Create a Namespace.
-- Create a Role.
-- Create a RoleBinding.
-- Grant namespace-specific permissions to the IAM user.
-- Understand how RBAC controls access after successful authentication.
-
-# Part 4: Configure RBAC (Role & RoleBinding) for IAM User
-
----
-
-# Objective
-
-In the previous part, we configured the `aws-iam-authenticator` and mapped our AWS IAM User to Kubernetes.
-
-At this point:
-
-- Kubernetes can identify the IAM User.
-- Authentication is complete.
-
-However, the user still has **no permissions** inside the cluster.
-
-This is because Kubernetes RBAC (Role-Based Access Control) has not yet been configured.
-
-In this part, we will:
+In this section, we will:
 
 - Create a Namespace.
 - Create a Role.
 - Create a RoleBinding.
-- Grant limited access to the IAM user.
-- Understand how Kubernetes Authorization works.
+- Create a test Pod.
+- Switch to the IAM User.
+- Verify the authenticated identity.
+- Test the RBAC permissions.
 
 ---
 
-# Authentication vs Authorization
+# Step 11: Create a Namespace
 
-Remember:
+Create a namespace where the IAM User will have access.
 
-```
-IAM User
-    │
-Authentication
-    │
-    ▼
-Kubernetes knows who you are
-    │
-Authorization (RBAC)
-    │
-    ▼
-Allowed / Denied
-```
-
-Authentication identifies the user.
-
-Authorization decides what the user can do.
-
----
-
-# Step 1: Create a Namespace
-
-Create a namespace where the IAM user will have access.
+### Command
 
 ```bash
 kubectl create namespace devlop
 ```
 
-Expected Output
-
-```text
-namespace/devlop created
-```
-
-Verify:
+Verify the namespace.
 
 ```bash
 kubectl get ns
 ```
 
-Example:
+Example Output
 
 ```text
-NAME
+NAME              STATUS
 
-default
-devlop
-kube-system
+default           Active
+devlop            Active
+kube-system       Active
 ```
-
-### Why?
-
-Instead of giving access to the entire cluster, we restrict the user to a specific namespace.
-
-This follows the **Principle of Least Privilege**, which grants only the permissions required to perform a task.
 
 ---
 
-# Step 2: Create a Role
+## Why?
 
-Create the Role definition.
+Instead of granting permissions across the entire cluster, we are limiting the user's access to a specific namespace.
+
+This follows the **Principle of Least Privilege**, giving users access only where it is required.
+
+---
+
+# Step 12: Create a Role and RoleBinding
+
+## Create Role
+
+Create the Role YAML.
 
 ```bash
 vim role.yml
 ```
 
-Add the following content:
+Example
 
 ```yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -1059,141 +797,15 @@ rules:
 
 ---
 
-# Understanding the Role
+## Create RoleBinding
 
-## apiVersion
-
-```yaml
-apiVersion: rbac.authorization.k8s.io/v1
-```
-
-Defines the RBAC API version.
-
----
-
-## Kind
-
-```yaml
-kind: Role
-```
-
-A Role grants permissions **only within a single namespace**.
-
----
-
-## Metadata
-
-```yaml
-metadata:
-  name: developer-role
-```
-
-This is the name of the Role.
-
----
-
-## Namespace
-
-```yaml
-namespace: devlop
-```
-
-The Role applies only inside the `devlop` namespace.
-
-It has no effect on any other namespace.
-
----
-
-## Rules
-
-```yaml
-rules:
-```
-
-Defines what actions are allowed.
-
----
-
-## apiGroups
-
-```yaml
-apiGroups: [""]
-```
-
-An empty string (`""`) represents the **Core API Group**.
-
-Pods belong to the Core API Group.
-
----
-
-## Resources
-
-```yaml
-resources:
-- pods
-```
-
-Specifies that the permissions apply only to Pods.
-
----
-
-## Verbs
-
-```yaml
-verbs:
-- get
-- list
-- watch
-```
-
-These permissions allow the user to:
-
-- Get Pod details
-- List Pods
-- Watch Pod changes
-
-Notice that we did **not** include:
-
-- create
-- delete
-- update
-- patch
-
-So the user cannot modify Pods.
-
----
-
-# Step 3: Create the Role
-
-Apply the Role.
-
-```bash
-kubectl apply -f role.yml
-```
-
-Expected Output
-
-```text
-role.rbac.authorization.k8s.io/developer-role created
-```
-
-Verify:
-
-```bash
-kubectl get role -n devlop
-```
-
----
-
-# Step 4: Create the RoleBinding
-
-Create the RoleBinding definition.
+Create the RoleBinding YAML.
 
 ```bash
 vim role-binding.yml
 ```
 
-Add:
+Example
 
 ```yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -1209,107 +821,60 @@ subjects:
   apiGroup: rbac.authorization.k8s.io
 
 roleRef:
-  apiGroup: rbac.authorization.k8s.io
   kind: Role
   name: developer-role
+  apiGroup: rbac.authorization.k8s.io
 ```
 
 ---
 
-# Understanding the RoleBinding
+## Why?
 
-## Kind
+The **Role** defines the permissions.
 
-```yaml
-kind: RoleBinding
-```
+The **RoleBinding** assigns those permissions to a specific user.
 
-A RoleBinding connects a Role with a User, Group, or ServiceAccount.
+Without a RoleBinding, the Role is never used.
 
 ---
 
-## Subject
+# Step 13: Apply Both YAML Files
 
-```yaml
-subjects:
+Create the Role.
+
+```bash
+kubectl apply -f role.yml
 ```
 
-Defines **who** receives the permissions.
-
----
-
-### kind
-
-```yaml
-kind: User
-```
-
-The subject is a Kubernetes User.
-
----
-
-### name
-
-```yaml
-name: Ramdev
-```
-
-This **must exactly match** the username defined in the `aws-auth.yml` ConfigMap.
-
-Example:
-
-```yaml
-mapUsers:
-- userarn: arn:aws:iam::144410074489:user/Ramdev
-  username: Ramdev
-```
-
-If the names do not match, RBAC will not work.
-
----
-
-## roleRef
-
-```yaml
-roleRef:
-```
-
-Specifies which Role should be assigned.
-
-```yaml
-kind: Role
-name: developer-role
-```
-
-This binds the `developer-role` Role to the `Ramdev` user.
-
----
-
-# Step 5: Create the RoleBinding
-
-Apply it.
+Create the RoleBinding.
 
 ```bash
 kubectl apply -f role-binding.yml
 ```
 
-Expected Output
-
-```text
-rolebinding.rbac.authorization.k8s.io/developer-binding created
-```
-
-Verify:
+Verify.
 
 ```bash
+kubectl get role -n devlop
+
 kubectl get rolebinding -n devlop
+```
+
+Example Output
+
+```text
+developer-role
+
+developer-binding
 ```
 
 ---
 
-# Step 6: Create a Test Pod
+## Create a Test Pod
 
-Create a Pod inside the `devlop` namespace.
+Create a Pod inside the **devlop** namespace.
+
+Example
 
 ```bash
 kubectl run pod1 \
@@ -1317,13 +882,13 @@ kubectl run pod1 \
 -n devlop
 ```
 
-Verify:
+Verify.
 
 ```bash
 kubectl get pods -n devlop
 ```
 
-Example:
+Example Output
 
 ```text
 NAME
@@ -1331,113 +896,17 @@ NAME
 pod1
 ```
 
-### Why?
+---
 
-We need a resource inside the namespace so that the IAM user can test the granted permissions.
+## Why?
+
+The Pod is created so that we can later verify whether the IAM User can access it.
 
 ---
 
-# Complete RBAC Flow
+# Step 14: Verify the Current AWS Identity
 
-```
-IAM User (Ramdev)
-          │
-          ▼
-AWS IAM Authentication
-          │
-          ▼
-aws-iam-authenticator
-          │
-          ▼
-Mapped to Kubernetes User "Ramdev"
-          │
-          ▼
-RoleBinding
-          │
-          ▼
-developer-role
-          │
-          ▼
-Permissions
-
-GET Pods
-LIST Pods
-WATCH Pods
-```
-
----
-
-# Summary
-
-In this part, we:
-
-- Created a namespace.
-- Created a Role.
-- Granted Pod read permissions.
-- Created a RoleBinding.
-- Linked the IAM User (`Ramdev`) with the Role.
-- Created a test Pod for permission verification.
-
-At this stage, the Kubernetes RBAC configuration is complete.
-
-The IAM user is now authenticated and has limited permissions within the `devlop` namespace.
-
----
-
-# What's Next?
-
-In **Part 5**, we will:
-
-- Switch to the IAM User credentials.
-- Configure the AWS CLI.
-- Export an IAM-based kubeconfig.
-- Verify the authenticated identity.
-- Test whether the IAM user can access only the `devlop` namespace.
-- Troubleshoot common authentication and authorization issues encountered during the lab.
-
-# Part 5: Testing AWS IAM Authentication and Troubleshooting
-
----
-
-# Objective
-
-In the previous parts, we:
-
-- Enabled AWS Authentication.
-- Configured the `aws-iam-authenticator`.
-- Created an IAM User.
-- Mapped the IAM User to Kubernetes.
-- Configured RBAC using Role and RoleBinding.
-
-Now it's time to verify whether the IAM user can access the Kubernetes cluster.
-
----
-
-# Step 1: Configure AWS CLI for the IAM User
-
-Configure the AWS CLI using the IAM user's Access Key and Secret Key.
-
-```bash
-aws configure
-```
-
-Example:
-
-```text
-AWS Access Key ID: <IAM User Access Key>
-
-AWS Secret Access Key: <IAM User Secret Key>
-
-Default Region: ap-south-1
-
-Output Format: json
-```
-
----
-
-# Step 2: Verify IAM Identity
-
-Before testing Kubernetes access, verify that AWS CLI is using the correct IAM user.
+Check which AWS identity is currently being used.
 
 ```bash
 aws sts get-caller-identity
@@ -1447,21 +916,341 @@ Example Output
 
 ```json
 {
-  "UserId": "...",
-  "Account": "144410074489",
-  "Arn": "arn:aws:iam::144410074489:user/Ramdev"
+  "Arn":"arn:aws:iam::<ACCOUNT-ID>:user/kops"
 }
 ```
 
-### Why?
+or
 
-This confirms that AWS CLI is authenticated as the intended IAM user.
+```json
+{
+  "Arn":"arn:aws:iam::<ACCOUNT-ID>:user/Ramdev"
+}
+```
 
 ---
 
-# Step 3: Generate IAM-Based kubeconfig
+## Why?
 
-Export a kubeconfig using the authentication plugin.
+Before testing permissions, always confirm which IAM User is currently authenticated.
+
+Otherwise, you may unknowingly test using the wrong credentials.
+
+---
+
+# Step 15: Remove Existing AWS Credentials
+
+Delete the current AWS CLI configuration.
+
+```bash
+rm -rf ~/.aws
+```
+
+---
+
+## Why?
+
+This removes any previously configured IAM credentials.
+
+It allows us to configure the AWS CLI with the credentials of the IAM User we want to test.
+
+---
+
+# Step 16: Configure AWS CLI
+
+Configure the AWS CLI using the Access Key created earlier.
+
+```bash
+aws configure
+```
+
+Enter:
+
+```text
+AWS Access Key ID
+
+AWS Secret Access Key
+
+Default Region
+
+Output Format
+```
+
+Verify the identity.
+
+```bash
+aws sts get-caller-identity
+```
+
+Example Output
+
+```json
+{
+    "Arn":"arn:aws:iam::<ACCOUNT-ID>:user/Ramdev"
+}
+```
+
+---
+
+## Why?
+
+This confirms that all future AWS API requests will be performed using the IAM User **Ramdev**.
+
+---
+
+# Step 17: Test the RBAC Permissions
+
+Now test whether the IAM User can access Kubernetes resources.
+
+Check the namespace Pods.
+
+```bash
+kubectl get pods -n devlop
+```
+
+If the IAM User has been authenticated correctly and the RoleBinding is configured properly, the Pod list should be displayed.
+
+Example Output
+
+```text
+NAME
+
+pod1
+```
+
+Try accessing resources outside the assigned namespace.
+
+Example
+
+```bash
+kubectl get pods -A
+```
+
+or
+
+```bash
+kubectl get ns
+```
+
+Depending on the RBAC permissions, these operations may return an error similar to:
+
+```text
+Error from server (Forbidden)
+```
+
+---
+
+## Why?
+
+This step verifies that:
+
+- AWS IAM Authentication is working.
+- The IAM User has been successfully mapped to a Kubernetes user.
+- RBAC permissions are being enforced correctly.
+
+Authentication confirms **who the user is**, while RBAC determines **what the user is allowed to do**.
+
+---
+
+# Summary
+
+In this section, we:
+
+- Created a dedicated namespace.
+- Created a Role with limited permissions.
+- Bound the Role to the IAM User using a RoleBinding.
+- Created a test Pod.
+- Verified the active AWS IAM identity.
+- Reconfigured the AWS CLI for the IAM User.
+- Tested Kubernetes access using RBAC.
+
+At this point, the IAM User **Ramdev** can authenticate to the Kubernetes cluster using AWS IAM credentials and is authorized to perform only the actions permitted by the configured Role within the `devlop` namespace.
+
+# Part 5: Troubleshooting IAM Authentication
+
+During the practical, we observed an unexpected behavior.
+
+Even after configuring the AWS IAM User, Role, and RoleBinding, the user was still able to perform administrator-level operations.
+
+Instead of immediately assuming RBAC was incorrect, we investigated the authentication mechanism step by step.
+
+---
+
+# Problem Statement
+
+After configuring the AWS IAM User and switching AWS credentials, we expected the IAM User to have only the permissions defined by the Role.
+
+However, when we executed:
+
+```bash
+kubectl get pods -A
+```
+
+or
+
+```bash
+kubectl get ns
+```
+
+the commands succeeded instead of returning a **Forbidden** error.
+
+This indicated that Kubernetes was **not authenticating us as the IAM User**.
+
+---
+
+# Step 18: Verify Current AWS Identity
+
+First, verify which AWS IAM User is being used.
+
+```bash
+aws sts get-caller-identity
+```
+
+Example
+
+```json
+{
+    "Arn":"arn:aws:iam::<ACCOUNT-ID>:user/Ramdev"
+}
+```
+
+---
+
+## Why?
+
+This confirms that the AWS CLI is using the expected IAM User credentials.
+
+If this is incorrect, Kubernetes authentication will also fail.
+
+---
+
+# Step 19: Verify the Current Kubernetes User
+
+Run:
+
+```bash
+kubectl auth whoami
+```
+
+Example Output
+
+```text
+Username
+
+kubecfg-root
+
+Groups
+
+system:masters
+system:authenticated
+```
+
+---
+
+## Expected Result
+
+We expected:
+
+```text
+Username
+
+Ramdev
+```
+
+because the IAM User **Ramdev** was mapped inside the ConfigMap.
+
+---
+
+## Actual Result
+
+Instead of:
+
+```
+Ramdev
+```
+
+Kubernetes authenticated us as:
+
+```
+kubecfg-root
+```
+
+which belongs to the **system:masters** group.
+
+This explains why every command was successful.
+
+---
+
+# Why Did This Happen?
+
+Authentication was **not using AWS IAM**.
+
+Instead, kubectl was still authenticating using a Kubernetes **Client Certificate**.
+
+Since that certificate belonged to **kubecfg-root**, Kubernetes treated the request as coming from the cluster administrator.
+
+RBAC for the IAM User was never evaluated.
+
+---
+
+# Step 20: Verify the Current kubeconfig
+
+Display the active kubeconfig.
+
+```bash
+kubectl config view --minify
+```
+
+Example
+
+```yaml
+users:
+
+- name: abhi.k8s.local
+
+  user:
+
+    client-certificate-data:
+
+    client-key-data:
+```
+
+---
+
+## Observation
+
+The kubeconfig still contained:
+
+- Client Certificate
+- Client Key
+
+instead of an authentication plugin.
+
+This proved that kubectl was still using **certificate-based authentication**.
+
+---
+
+# Step 21: Backup the Existing kubeconfig
+
+Before making changes, create a backup.
+
+```bash
+cp ~/.kube/config ~/.kube/config.admin
+```
+
+---
+
+## Why?
+
+This preserves the administrator kubeconfig.
+
+If anything goes wrong, it can easily be restored.
+
+---
+
+# Step 22: Generate an IAM-Based kubeconfig
+
+Generate a new kubeconfig using the kOps authentication plugin.
 
 ```bash
 kops export kubecfg \
@@ -1470,86 +1259,89 @@ abhi.k8s.local \
 --kubeconfig=/root/.kube/config.iam
 ```
 
-### Why?
+---
 
-This generates a separate kubeconfig that uses the Kops authentication plugin instead of the default kubeconfig.
+## Why?
+
+Unlike the default kubeconfig, this configuration does not store client certificates.
+
+Instead, it uses an **authentication plugin (exec plugin)**.
 
 ---
 
-# Step 4: Use the New kubeconfig
+# Step 23: Verify the New kubeconfig
+
+Open the generated file.
+
+```bash
+cat ~/.kube/config.iam
+```
+
+Example
+
+```yaml
+users:
+
+- name: abhi.k8s.local
+
+  user:
+
+    exec:
+
+      command: kops
+```
+
+---
+
+## Observation
+
+The new kubeconfig uses an **exec plugin**.
+
+Whenever kubectl needs credentials, it executes:
+
+```text
+kops helpers kubectl-auth
+```
+
+instead of using a client certificate stored in the kubeconfig.
+
+---
+
+# Step 24: Switch to the New kubeconfig
+
+Use the IAM kubeconfig.
 
 ```bash
 export KUBECONFIG=/root/.kube/config.iam
 ```
 
-Verify:
+Verify.
 
 ```bash
 kubectl config view --minify
 ```
 
-You should observe an **exec** section similar to:
-
-```yaml
-users:
-- name: abhi.k8s.local
-  user:
-    exec:
-      command: kops
-```
-
-This indicates that kubectl will execute the Kops authentication plugin whenever it needs credentials.
+The output should display an **exec** section instead of **client-certificate-data**.
 
 ---
 
-# Step 5: Verify the Authenticated User
+## Why?
 
-Run:
-
-```bash
-kubectl auth whoami
-```
+This ensures kubectl uses the authentication plugin rather than the administrator certificate.
 
 ---
 
-# Expected Behaviour
+# Step 25: Verify the Authentication Plugin
 
-If IAM Authentication is working correctly, the username should match the IAM user mapped inside the ConfigMap.
-
-Example:
-
-```text
-Username: Ramdev
-```
-
----
-
-# What Happened in Our Lab?
-
-Instead of the expected result, we observed:
-
-```text
-Username: kubecfg-root
-
-Groups:
-system:masters
-```
-
-This indicated that the request was still authenticated using a **temporary client certificate** instead of the AWS IAM user.
-
----
-
-# How Did We Confirm It?
-
-We executed:
+Execute the helper manually.
 
 ```bash
 kops helpers kubectl-auth \
 --cluster=abhi.k8s.local \
---state=s3://abhis.kops.v1
+--state=s3://<STATE-STORE>
 ```
 
-The output contained:
+Example Output
 
 ```text
 clientCertificateData
@@ -1557,128 +1349,334 @@ clientCertificateData
 clientKeyData
 ```
 
-This proved that the authentication plugin was returning an **X.509 Client Certificate**, not an AWS IAM authentication token.
+---
 
-Because of this, Kubernetes authenticated us as:
+## Observation
+
+Although we expected an AWS IAM authentication token, the plugin generated a **temporary client certificate**.
+
+As a result, Kubernetes still authenticated the request as:
 
 ```text
 kubecfg-root
 ```
 
-instead of:
-
-```text
-Ramdev
-```
-
----
-
-# Why Is This Important?
-
-Even though we had:
-
-- Enabled AWS Authentication
-- Created the ConfigMap
-- Mapped the IAM User
-- Configured RBAC
-
-the authentication plugin generated a temporary Kubernetes client certificate.
-
-Therefore, Kubernetes never evaluated the IAM user mapping.
-
----
-
-# ConfigMap Verification
-
-We verified that the ConfigMap was correctly configured.
-
-```bash
-kubectl get cm aws-iam-authenticator \
--n kube-system \
--o yaml
-```
-
-Configuration:
-
-```yaml
-mapUsers:
-- userarn: arn:aws:iam::144410074489:user/Ramdev
-  username: Ramdev
-  groups:
-  - developers
-```
-
-This confirmed that the server-side configuration was correct.
-
----
-
-# Additional Issue Encountered
-
-While testing the IAM user, we received:
-
-```text
-AccessDenied
-
-s3:GetObject
-```
-
-The IAM user did not have permission to read the Kops State Store.
-
----
-
-# Solution
-
-We created an IAM Policy that granted read-only access to the Kops State Store and attached it to the IAM user.
-
-After attaching the policy, the IAM user was able to access the State Store successfully.
+instead of the mapped IAM User.
 
 ---
 
 # Important Learning
 
-During this practical, we confirmed the following:
+Simply enabling AWS Authentication is **not enough**.
 
-✅ AWS Authentication was enabled.
+Always verify:
 
-✅ aws-iam-authenticator was running.
+- Which AWS IAM User is active.
+- Which kubeconfig is being used.
+- Whether kubectl is using client certificates or an authentication plugin.
+- Which username Kubernetes ultimately authenticates.
 
-✅ IAM User mapping existed.
+The command:
 
-✅ RBAC objects were created.
-
-However, the Kops authentication plugin generated a temporary client certificate (`kubecfg-root`) instead of authenticating as the mapped IAM user.
-
-As a result, RBAC for the IAM user was not exercised because Kubernetes authenticated the request as the cluster administrator.
-
-This behavior may vary depending on the Kops version or authentication plugin implementation.
-
----
-
-# Troubleshooting Checklist
-
-If AWS IAM Authentication does not work, verify the following:
-
-- Is `authentication: aws: {}` enabled in the cluster configuration?
-- Is the `aws-iam-authenticator` pod running?
-- Does the ConfigMap exist in the `kube-system` namespace?
-- Is the IAM User ARN correct?
-- Does the `username` in the ConfigMap match the RoleBinding subject?
-- Does the IAM user have permission to read the Kops State Store?
-- Is the correct kubeconfig being used?
-- Does `kubectl auth whoami` show the expected username?
-
----
-
-# Complete Authentication and Authorization Flow
-
+```bash
+kubectl auth whoami
 ```
+
+is one of the most useful troubleshooting commands because it shows the exact identity recognized by the Kubernetes API Server.
+
+---
+
+# Summary
+
+During troubleshooting, we discovered:
+
+- AWS CLI was using the correct IAM User.
+- Kubernetes was **not** using the IAM User.
+- kubectl was authenticating with a client certificate.
+- The authenticated Kubernetes user was **kubecfg-root**.
+- Since **kubecfg-root** belongs to **system:masters**, RBAC restrictions were bypassed.
+- We generated an IAM-based kubeconfig using the kOps authentication plugin to continue the investigation.
+
+In the next section, we will troubleshoot another issue encountered during the lab: **AccessDenied while reading the kOps State Store (S3)** and understand why the IAM User required additional S3 permissions.
+
+# Part 6: Troubleshooting S3 Access & Final Verification
+
+While testing AWS IAM Authentication, another issue was encountered.
+
+Even after generating an IAM-based kubeconfig, Kubernetes authentication failed because the IAM User did not have permission to read the **kOps State Store**.
+
+In this section, we will troubleshoot and resolve this issue.
+
+---
+
+# Step 26: Attempt to Access the Cluster
+
+After switching to the IAM User and using the IAM kubeconfig, execute:
+
+```bash
+kubectl auth whoami
+```
+
+or
+
+```bash
+kubectl get pods -n devlop
+```
+
+Example Error
+
+```text
+AccessDenied
+
+User:
+arn:aws:iam::<ACCOUNT-ID>:user/Ramdev
+
+is not authorized to perform:
+
+s3:GetObject
+
+on resource:
+
+arn:aws:s3:::<STATE-STORE>/cluster/config
+```
+
+---
+
+## Why Did This Happen?
+
+The kubeconfig generated by kOps uses an authentication plugin.
+
+Whenever kubectl sends a request, the plugin first reads the cluster configuration from the **kOps State Store (Amazon S3)**.
+
+Since the IAM User had no permission to access the S3 bucket, authentication failed before Kubernetes could even verify the user.
+
+---
+
+# Step 27: Create an IAM Policy
+
+Create a JSON file.
+
+```bash
+vim s3-read-policy.json
+```
+
+Example
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:ListBucket"
+      ],
+      "Resource": [
+        "arn:aws:s3:::<STATE-STORE>",
+        "arn:aws:s3:::<STATE-STORE>/*"
+      ]
+    }
+  ]
+}
+```
+
+Save the file.
+
+---
+
+## Why?
+
+This policy grants the IAM User read-only access to the kOps State Store.
+
+The user does **not** require write permissions because it only needs to read the cluster configuration.
+
+---
+
+# Step 28: Create the IAM Policy
+
+Execute:
+
+```bash
+aws iam create-policy \
+--policy-name KopsStateStoreReadOnly \
+--policy-document file://s3-read-policy.json
+```
+
+Example Output
+
+```text
+PolicyName
+
+KopsStateStoreReadOnly
+```
+
+---
+
+## Why?
+
+This creates a reusable IAM policy that can later be attached to any IAM User requiring Kubernetes authentication.
+
+---
+
+# Step 29: Attach the Policy to the IAM User
+
+Attach the policy.
+
+```bash
+aws iam attach-user-policy \
+--user-name Ramdev \
+--policy-arn arn:aws:iam::<ACCOUNT-ID>:policy/KopsStateStoreReadOnly
+```
+
+Verify.
+
+```bash
+aws iam list-attached-user-policies \
+--user-name Ramdev
+```
+
+Example Output
+
+```text
+KopsStateStoreReadOnly
+```
+
+---
+
+## Why?
+
+Without this policy, the authentication plugin cannot read the cluster configuration stored in Amazon S3.
+
+---
+
+# Step 30: Configure AWS CLI Again
+
+Switch back to the IAM User credentials if required.
+
+```bash
+aws configure
+```
+
+Verify the identity.
+
+```bash
+aws sts get-caller-identity
+```
+
+Expected Output
+
+```json
+{
+  "Arn":"arn:aws:iam::<ACCOUNT-ID>:user/Ramdev"
+}
+```
+
+---
+
+# Step 31: Use the IAM kubeconfig
+
+Switch to the kubeconfig generated with the authentication plugin.
+
+```bash
+export KUBECONFIG=/root/.kube/config.iam
+```
+
+Verify.
+
+```bash
+kubectl config view --minify
+```
+
+The kubeconfig should contain:
+
+```yaml
+exec:
+  command: kops
+```
+
+instead of
+
+```yaml
+client-certificate-data
+```
+
+---
+
+# Step 32: Verify Authentication
+
+Execute
+
+```bash
+kubectl auth whoami
+```
+
+During our lab, the output was:
+
+```text
+Username
+
+kubecfg-root
+
+Groups
+
+system:masters
+```
+
+---
+
+## Important Observation
+
+Even after:
+
+- Enabling AWS Authentication
+- Creating the ConfigMap
+- Mapping the IAM User
+- Creating the Role
+- Creating the RoleBinding
+- Using the authentication plugin
+- Granting S3 access
+
+the authentication plugin still generated a **temporary client certificate**, causing Kubernetes to authenticate the request as **kubecfg-root**.
+
+As a result, the IAM User mapping was not exercised in our environment.
+
+This behavior depends on the **kOps version**, cluster configuration, and authentication plugin implementation.
+
+---
+
+# Lessons Learned
+
+During this practical, we learned:
+
+- AWS IAM Authentication must be enabled in the cluster.
+- The `aws-iam-authenticator` Pod must be running.
+- The ConfigMap must correctly map IAM Users.
+- IAM Users require valid AWS credentials.
+- RBAC controls authorization after successful authentication.
+- The kOps authentication plugin may require access to the S3 State Store.
+- Always verify the authenticated Kubernetes identity using:
+
+```bash
+kubectl auth whoami
+```
+
+---
+
+# Complete Authentication Flow
+
+```text
 AWS IAM User
         │
         ▼
-AWS CLI
+AWS CLI Credentials
         │
         ▼
 Authentication Plugin
+        │
+        ▼
+Read Cluster Configuration
+from kOps State Store (S3)
         │
         ▼
 aws-iam-authenticator
@@ -1689,10 +1687,7 @@ Kubernetes API Server
 Authentication Successful
         │
         ▼
-RoleBinding
-        │
-        ▼
-Role
+RBAC (Role / RoleBinding)
         │
         ▼
 Access Granted / Access Denied
@@ -1702,118 +1697,112 @@ Access Granted / Access Denied
 
 # Summary
 
-In this guide, we learned:
+In this lab, we successfully explored the complete workflow of AWS IAM Authentication with Kubernetes.
 
-- Difference between Authentication and Authorization.
-- How to enable AWS Authentication in a Kops cluster.
-- Purpose of `aws-iam-authenticator`.
-- How IAM users are mapped to Kubernetes.
-- How RBAC controls access after successful authentication.
-- How to configure Roles and RoleBindings for IAM users.
-- Common troubleshooting steps for AWS IAM Authentication.
-- Real-world debugging of authentication and kubeconfig issues encountered during the lab.
+We learned how to:
 
-This completes the AWS IAM Authentication and RBAC Authorization practical.
+- Enable AWS Authentication in a kOps cluster.
+- Deploy and configure the `aws-iam-authenticator`.
+- Map an AWS IAM User to a Kubernetes identity.
+- Configure RBAC using Role and RoleBinding.
+- Troubleshoot missing ConfigMaps and pending Pods.
+- Resolve S3 `AccessDenied` issues by granting read-only access to the kOps State Store.
+- Verify authenticated identities using `kubectl auth whoami`.
+- Understand the interaction between AWS IAM Authentication and Kubernetes RBAC.
 
-# Part 6: Interview Questions, Best Practices & Final Revision
+This concludes the practical implementation of AWS IAM Authentication with Kubernetes.
+
+# Part 7: Interview Questions, Best Practices & Revision
+
+This section summarizes the most important concepts covered in this lab and includes commonly asked interview questions.
 
 ---
 
 # Frequently Asked Interview Questions
 
-## Q1. What is Authentication in Kubernetes?
+## 1. What is AWS IAM Authentication in Kubernetes?
 
-Authentication is the process of verifying **who the user is**.
+AWS IAM Authentication allows AWS IAM Users or IAM Roles to authenticate to a Kubernetes cluster without using Kubernetes client certificates.
 
-It answers the question:
-
-> **Who are you?**
-
-Examples:
-
-- Client Certificate
-- AWS IAM
-- OIDC
-- LDAP
+Instead of verifying certificates, Kubernetes verifies the user's AWS IAM identity through the **aws-iam-authenticator**.
 
 ---
 
-## Q2. What is Authorization in Kubernetes?
-
-Authorization determines **what an authenticated user is allowed to do**.
-
-It answers the question:
-
-> **What can you do?**
-
-Kubernetes commonly uses **RBAC (Role-Based Access Control)** for authorization.
-
----
-
-## Q3. What is the difference between Authentication and Authorization?
+## 2. What is the difference between Authentication and Authorization?
 
 | Authentication | Authorization |
-|---------------|---------------|
-| Verifies identity | Verifies permissions |
+|----------------|---------------|
+| Verifies the identity of the user | Determines what the user can do |
 | Happens first | Happens after authentication |
-| Who are you? | What can you do? |
-| IAM, Certificates | RBAC |
+| Example: AWS IAM | Example: RBAC |
 
 ---
 
-## Q4. What is aws-iam-authenticator?
+## 3. Why do we need aws-iam-authenticator?
 
-`aws-iam-authenticator` is a component that allows Kubernetes to authenticate AWS IAM Users.
+Kubernetes does not understand AWS IAM identities directly.
 
-It acts as a bridge between:
+The **aws-iam-authenticator** acts as a bridge between AWS IAM and Kubernetes.
 
-```
-AWS IAM
-      │
-      ▼
-aws-iam-authenticator
-      │
-      ▼
-Kubernetes API Server
-```
+It:
 
----
-
-## Q5. Why do we need aws-iam-authenticator?
-
-Kubernetes cannot understand AWS IAM Users directly.
-
-The authenticator:
-
-- Validates the AWS IAM identity.
+- Validates AWS IAM credentials.
 - Maps the IAM User to a Kubernetes username.
-- Sends the authenticated username to the Kubernetes API Server.
+- Sends the authenticated identity to the Kubernetes API Server.
 
 ---
 
-## Q6. What is the purpose of the aws-iam-authenticator ConfigMap?
+## 4. What is the purpose of the aws-auth ConfigMap?
 
-The ConfigMap stores the mapping between:
-
-- AWS IAM User ARN
-- Kubernetes Username
-- Kubernetes Groups
+The ConfigMap maps AWS IAM Users or IAM Roles to Kubernetes users and groups.
 
 Example:
 
 ```yaml
 mapUsers:
-- userarn: arn:aws:iam::144410074489:user/Ramdev
+- userarn: arn:aws:iam::ACCOUNT-ID:user/Ramdev
   username: Ramdev
   groups:
   - developers
 ```
 
+Without this mapping, Kubernetes does not know how to identify the IAM User.
+
 ---
 
-## Q7. What happens if the ConfigMap is missing?
+## 5. Why do we create a Role?
 
-The `aws-iam-authenticator` Pod cannot mount its required configuration.
+A Role defines what actions are allowed within a specific namespace.
+
+Example:
+
+- Get Pods
+- List Pods
+- Watch Pods
+
+---
+
+## 6. Why do we create a RoleBinding?
+
+A Role only defines permissions.
+
+A RoleBinding assigns those permissions to a User, Group, or ServiceAccount.
+
+Without a RoleBinding, the Role has no effect.
+
+---
+
+## 7. Why did we create a separate namespace?
+
+To follow the **Principle of Least Privilege**.
+
+Instead of granting cluster-wide permissions, the IAM User receives access only to the required namespace.
+
+---
+
+## 8. What happens if the ConfigMap is missing?
+
+The aws-iam-authenticator Pod cannot start.
 
 Typical error:
 
@@ -1823,145 +1812,183 @@ MountVolume.SetUp failed
 configmap "aws-iam-authenticator" not found
 ```
 
-As a result, the Pod remains in the **ContainerCreating** state.
-
 ---
 
-## Q8. Does Authentication provide permissions?
+## 9. Why did we create an S3 Read-Only Policy?
 
-No.
+The kOps authentication plugin reads the cluster configuration from the kOps State Store (Amazon S3).
 
-Authentication only verifies identity.
+Without permission, authentication fails with:
 
-Permissions are provided by **RBAC**.
+```text
+AccessDenied
 
----
-
-## Q9. Which RBAC objects are used in this practical?
-
-- Namespace
-- Role
-- RoleBinding
-
----
-
-## Q10. Why did we create a Role instead of a ClusterRole?
-
-Because we wanted to give access only inside a specific namespace (`devlop`).
-
-A Role is namespace-scoped.
-
----
-
-## Q11. Why did we create a RoleBinding?
-
-A Role only defines permissions.
-
-A RoleBinding assigns those permissions to a User, Group, or ServiceAccount.
-
----
-
-## Q12. Why must the username in RoleBinding match the username in aws-auth.yml?
-
-Example:
-
-```yaml
-mapUsers:
-- username: Ramdev
+s3:GetObject
 ```
 
-RoleBinding:
-
-```yaml
-subjects:
-- kind: User
-  name: Ramdev
-```
-
-Both names must match exactly; otherwise, RBAC will not apply to that user.
-
 ---
 
-## Q13. What is the purpose of groups in aws-auth.yml?
-
-Groups allow multiple users to receive the same permissions.
-
-Instead of binding every user individually, a RoleBinding can target a group.
-
----
-
-## Q14. Why did the IAM user need permission to the Kops State Store?
-
-The authentication plugin needed to read the Kops cluster configuration stored in the S3 State Store.
-
-Without access, authentication failed with an `AccessDenied` error.
-
----
-
-## Q15. How can you verify which identity Kubernetes is using?
+## 10. Which command tells you the Kubernetes identity being used?
 
 ```bash
 kubectl auth whoami
 ```
 
-This displays the authenticated username and groups.
+This command displays:
+
+- Username
+- Groups
+- Authentication details
+
+It is one of the most useful commands for troubleshooting authentication issues.
 
 ---
 
 # Best Practices
 
-- Use IAM Users or IAM Roles instead of long-lived Kubernetes client certificates when possible.
-- Follow the Principle of Least Privilege.
-- Grant namespace-level access whenever possible.
-- Use Groups to manage permissions for multiple users.
-- Keep the `aws-iam-authenticator` ConfigMap secure.
-- Regularly audit IAM users and RBAC permissions.
-- Avoid granting `system:masters` unless absolutely necessary.
+- Use AWS IAM Authentication instead of distributing Kubernetes client certificates to users.
+- Grant only the minimum permissions required.
+- Use namespace-scoped Roles whenever possible.
+- Prefer Groups over assigning permissions directly to individual users.
+- Keep the `aws-auth` ConfigMap updated.
+- Regularly review IAM policies and RBAC permissions.
+- Backup the administrator kubeconfig before making authentication changes.
+- Verify the authenticated identity before troubleshooting authorization issues.
 
 ---
 
 # Common Troubleshooting Checklist
 
-If authentication or authorization does not work, verify:
+If authentication is not working, verify the following:
 
-- `authentication: aws: {}` is enabled.
-- `aws-iam-authenticator` Pod is Running.
-- ConfigMap exists in the `kube-system` namespace.
-- IAM User ARN is correct.
-- Username in ConfigMap matches the RoleBinding subject.
-- IAM user has access to the Kops State Store (if required).
-- Correct kubeconfig is in use.
-- `kubectl auth whoami` shows the expected identity.
+- Is AWS Authentication enabled in the cluster?
+- Is the `aws-iam-authenticator` Pod running?
+- Does the `aws-auth` ConfigMap exist?
+- Is the IAM User ARN correct?
+- Does the mapped Kubernetes username match the RoleBinding subject?
+- Is the IAM User using the correct AWS credentials?
+- Does the IAM User have access to the kOps State Store?
+- Is the correct kubeconfig being used?
+- What does `kubectl auth whoami` display?
 
 ---
 
-# Complete Request Flow
+# Frequently Used Commands
 
+## Check Cluster Configuration
+
+```bash
+kops get cluster abhi.k8s.local -o yaml
 ```
+
+---
+
+## Edit Cluster
+
+```bash
+kops edit cluster abhi.k8s.local
+```
+
+---
+
+## Update Cluster
+
+```bash
+kops update cluster abhi.k8s.local --yes
+```
+
+---
+
+## Rolling Update
+
+```bash
+kops rolling-update cluster abhi.k8s.local --yes
+```
+
+---
+
+## Validate Cluster
+
+```bash
+kops validate cluster
+```
+
+---
+
+## Check aws-iam-authenticator Pod
+
+```bash
+kubectl get pods -n kube-system
+```
+
+---
+
+## Describe Pod
+
+```bash
+kubectl describe pod <pod-name> -n kube-system
+```
+
+---
+
+## Apply ConfigMap
+
+```bash
+kubectl apply -f aws-auth.yml
+```
+
+---
+
+## Verify AWS Identity
+
+```bash
+aws sts get-caller-identity
+```
+
+---
+
+## Configure AWS CLI
+
+```bash
+aws configure
+```
+
+---
+
+## Verify Kubernetes Identity
+
+```bash
+kubectl auth whoami
+```
+
+---
+
+# Complete Authentication & Authorization Flow
+
+```text
 AWS IAM User
-      │
-      ▼
-AWS CLI
-      │
-      ▼
+       │
+       ▼
+AWS CLI Credentials
+       │
+       ▼
 Authentication Plugin
-      │
-      ▼
+       │
+       ▼
 aws-iam-authenticator
-      │
-      ▼
+       │
+       ▼
 Kubernetes API Server
-      │
-      ▼
+       │
 Authentication Successful
-      │
-      ▼
+       │
+       ▼
 RoleBinding
-      │
-      ▼
+       │
+       ▼
 Role
-      │
-      ▼
+       │
+       ▼
 Allow / Deny Request
 ```
 
@@ -1969,54 +1996,29 @@ Allow / Deny Request
 
 # Key Takeaways
 
-- Authentication verifies **who you are**.
-- Authorization determines **what you can do**.
-- AWS IAM Authentication integrates AWS identities with Kubernetes.
-- `aws-iam-authenticator` bridges AWS IAM and Kubernetes.
-- RBAC controls permissions after authentication.
-- Roles define permissions, and RoleBindings assign them.
-- Namespace-scoped access is achieved using **Role + RoleBinding**.
-- Always verify your authenticated identity before troubleshooting RBAC.
+- AWS IAM Authentication verifies **who the user is**.
+- Kubernetes RBAC determines **what the user can do**.
+- The `aws-iam-authenticator` bridges AWS IAM and Kubernetes.
+- The `aws-auth` ConfigMap maps IAM identities to Kubernetes users.
+- Roles define permissions.
+- RoleBindings assign permissions.
+- Namespace-scoped Roles provide least-privilege access.
+- Always verify the authenticated identity using `kubectl auth whoami`.
+- Troubleshoot methodically by checking authentication before authorization.
 
 ---
 
-# Final Revision
+# Conclusion
 
-Remember the complete sequence:
+In this lab, we successfully explored how AWS IAM Authentication integrates with Kubernetes in a kOps-managed cluster.
 
-```
-Enable AWS Authentication
-        │
-        ▼
-Deploy aws-iam-authenticator
-        │
-        ▼
-Create aws-auth ConfigMap
-        │
-        ▼
-Map IAM User
-        │
-        ▼
-Create Namespace
-        │
-        ▼
-Create Role
-        │
-        ▼
-Create RoleBinding
-        │
-        ▼
-Authenticate IAM User
-        │
-        ▼
-RBAC Authorization
-        │
-        ▼
-Access Granted / Denied
-```
+We learned how to:
 
----
+- Enable AWS Authentication.
+- Configure the `aws-iam-authenticator`.
+- Map AWS IAM Users using the `aws-auth` ConfigMap.
+- Configure RBAC with Roles and RoleBindings.
+- Troubleshoot common authentication issues.
+- Understand the interaction between AWS IAM Authentication and Kubernetes Authorization.
 
-## Congratulations!
-
-You have successfully completed the **AWS IAM Authentication and RBAC Authorization** topic. You now understand how AWS IAM identities are integrated with Kubernetes and how RBAC is used to control what authenticated users are allowed to do inside the cluster.
+By combining **AWS IAM Authentication** with **Kubernetes RBAC**, we can securely control access to cluster resources while leveraging centralized identity management provided by AWS.
